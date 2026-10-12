@@ -7,6 +7,8 @@ import os
 import re
 import sqlite3
 import threading
+import base64
+import uuid
 import urllib.error
 import urllib.request
 from collections import Counter
@@ -25,6 +27,8 @@ DB_PATH = ROOT / "assignment.db"
 PORT = int(os.environ.get("ASSIGNMENT_PORT", "8787"))
 HOST = os.environ.get("ASSIGNMENT_HOST", "127.0.0.1")
 DB_LOCK = threading.Lock()
+SESSION_LOCK = threading.Lock()
+SESSIONS: dict[str, set[str]] = {}
 OPENROUTER_URL = os.environ.get("OPENROUTER_URL", "https://openrouter.ai/api/v1/chat/completions")
 OPENROUTER_TIMEOUT = max(3, min(int(os.environ.get("OPENROUTER_TIMEOUT_SECONDS", "20")), 60))
 
@@ -84,11 +88,21 @@ def db() -> sqlite3.Connection:
         question TEXT NOT NULL,
         reason TEXT NOT NULL,
         created_at TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'open'
+        status TEXT NOT NULL DEFAULT 'open',
+        conversation_id TEXT NOT NULL DEFAULT '',
+        reply TEXT,
+        reply_created_at TEXT
     )""")
     hold_columns = {row[1] for row in conn.execute("PRAGMA table_info(holds)")}
     if "customer_phone" not in hold_columns:
         conn.execute("ALTER TABLE holds ADD COLUMN customer_phone TEXT NOT NULL DEFAULT ''")
+    escalation_columns = {row[1] for row in conn.execute("PRAGMA table_info(escalations)")}
+    if "conversation_id" not in escalation_columns:
+        conn.execute("ALTER TABLE escalations ADD COLUMN conversation_id TEXT NOT NULL DEFAULT ''")
+    if "reply" not in escalation_columns:
+        conn.execute("ALTER TABLE escalations ADD COLUMN reply TEXT")
+    if "reply_created_at" not in escalation_columns:
+        conn.execute("ALTER TABLE escalations ADD COLUMN reply_created_at TEXT")
     conn.commit()
     return conn
 
@@ -166,8 +180,8 @@ def _model_synthesis(question: str, grounded: dict) -> str | None:
         return None
 
 
-def answer_with_optional_synthesis(question: str, rows: list[dict[str, str]]) -> dict:
-    grounded = grounded_answer(question, rows)
+def answer_with_optional_synthesis(question: str, rows: list[dict[str, str]], conversation_id: str = "") -> dict:
+    grounded = grounded_answer(question, rows, conversation_id)
     synthesized = _model_synthesis(question, grounded)
     if synthesized:
         grounded = {**grounded, "answer": synthesized, "synthesis": "openrouter"}
@@ -176,12 +190,12 @@ def answer_with_optional_synthesis(question: str, rows: list[dict[str, str]]) ->
     return grounded
 
 
-def customer_answer(question: str, rows: list[dict[str, str]]) -> dict:
+def customer_answer(question: str, rows: list[dict[str, str]], conversation_id: str = "") -> dict:
     """Return a customer-safe answer; aggregate owner analytics stay private."""
     lowered = question.lower()
     if not re.search(r"\bSS-\d+\b", question, re.IGNORECASE) and any(term in lowered for term in ("average", "most common", "most bookings", "total balance", "total advance", "how many bookings", "which city has")):
         return {"answer": "I can help with a specific booking, date, package, or availability question. Please share your booking ID for personal details.", "escalated": False, "synthesis": "deterministic"}
-    return answer_with_optional_synthesis(question, rows)
+    return answer_with_optional_synthesis(question, rows, conversation_id)
 
 
 def dataset_dashboard(rows: list[dict[str, str]]) -> dict:
@@ -315,13 +329,13 @@ def brief_markdown(rows: list[dict[str, str]]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def grounded_answer(question: str, rows: list[dict[str, str]]) -> dict:
+def grounded_answer(question: str, rows: list[dict[str, str]], conversation_id: str = "") -> dict:
     q = question.lower().strip()
     columns = list(rows[0].keys()) if rows else []
     if not q:
         return {"answer": "Ask a question about bookings, dates, packages, prices, status, or album stage.", "escalated": False}
     if any(word in q for word in ("why", "cause", "reason", "should we", "recommend", "forecast", "will bookings", "bookings increase", "bookings decrease", "bookings decline")):
-        return escalate(question, "The CSV contains booking records but does not establish causes or business decisions.")
+        return escalate(question, "The CSV contains booking records but does not establish causes or business decisions.", conversation_id)
     if ("what does" in q or "represent" in q or "business" in q) and not any(term in q for term in ("cost", "price", "package")):
         labels = ", ".join(field.replace("_", " ") for field in columns)
         return {"answer": f"The uploaded sheet contains {len(rows)} records with these visible fields: {labels}. It can support descriptive counts, numeric summaries, comparisons, and date lookups where those fields are populated. It does not by itself establish business policies, causes, capacity, or forecasts.\n\n{source_note()}", "escalated": False}
@@ -368,10 +382,10 @@ def grounded_answer(question: str, rows: list[dict[str, str]]) -> dict:
     if any(phrase in q for phrase in ("most common", "most bookings", "most records", "highest number", "largest", "top")):
         field = _field_match(q, columns, ("event_type", "package", "city", "status", "album_stage"))
         if not field:
-            return escalate(question, "The question does not identify a categorical field to group.")
+            return escalate(question, "The question does not identify a categorical field to group.", conversation_id)
         counts = Counter(row.get(field, "") for row in rows if row.get(field, ""))
         if not counts:
-            return escalate(question, f"The uploaded sheet has no usable values for {field}.")
+            return escalate(question, f"The uploaded sheet has no usable values for {field}.", conversation_id)
         value, count = max(counts.items(), key=lambda item: item[1])
         return {"answer": f"The most common {field.replace('_', ' ')} is '{value}', with {count} of {len(rows)} records ({count / len(rows):.2%}).\n\n{source_note()}", "escalated": False}
     if re.search(r"\bhow many\b", q):
@@ -387,10 +401,10 @@ def grounded_answer(question: str, rows: list[dict[str, str]]) -> dict:
     if "average" in q or "avg" in q or "mean" in q:
         field = _field_match(q, columns, ("package_price", "advance_paid", "balance_due"))
         if not field:
-            return escalate(question, "The sheet has several numeric fields; name the field to average.")
+            return escalate(question, "The sheet has several numeric fields; name the field to average.", conversation_id)
         values = _numeric_values(rows, field)
         if not values:
-            return escalate(question, f"{field} is not a usable numeric field in the uploaded sheet.")
+            return escalate(question, f"{field} is not a usable numeric field in the uploaded sheet.", conversation_id)
         avg = sum(values) / len(values)
         return {"answer": f"Average {field.replace('_', ' ')} is {display_number(field, avg)} across {len(values)} records.\n\n{source_note()}", "escalated": False}
     if any(word in q for word in ("total", "sum", "how much")):
@@ -441,14 +455,14 @@ def grounded_answer(question: str, rows: list[dict[str, str]]) -> dict:
     if any(word in q for word in ("status", "album", "package", "booking", "city", "date", "price", "payment", "balance", "field", "column")):
         usable = ", ".join(field.replace("_", " ") for field in columns)
         return {"answer": f"I can answer supported facts from the {len(rows)} uploaded rows. Available columns are: {usable}. Ask for a specific field, date, total, average, group comparison, or upcoming schedule.\n\n{source_note()}", "escalated": False}
-    return escalate(question, "No matching field or supported fact was found in the uploaded sheet.")
+    return escalate(question, "No matching field or supported fact was found in the uploaded sheet.", conversation_id)
 
 
-def escalate(question: str, reason: str) -> dict:
+def escalate(question: str, reason: str, conversation_id: str = "") -> dict:
     now = datetime.now(timezone.utc).isoformat()
     with DB_LOCK:
         conn = db()
-        conn.execute("INSERT INTO escalations(question, reason, created_at) VALUES (?, ?, ?)", (question, reason, now))
+        conn.execute("INSERT INTO escalations(question, reason, created_at, conversation_id) VALUES (?, ?, ?, ?)", (question, reason, now, conversation_id))
         conn.commit(); conn.close()
     return {"answer": "I don't have enough evidence in the booking sheet to answer that safely. I sent this question to the studio owner for review.", "reason": reason, "escalated": True}
 
@@ -473,8 +487,80 @@ def create_hold(event_date: str, customer_name: str, customer_phone: str = "") -
 HTML = """<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Studio Desk</title><style>
 body{font-family:Inter,system-ui,sans-serif;background:#f5f7fb;margin:0;color:#172033}.wrap{max-width:980px;margin:0 auto;padding:28px}.brand{font-size:25px;font-weight:800}.muted{color:#68738a}.grid{display:grid;grid-template-columns:2fr 1fr;gap:20px;margin-top:20px}.card{background:white;border:1px solid #e1e6ef;border-radius:16px;padding:20px;box-shadow:0 5px 18px #1720330b}textarea,input,button{font:inherit}textarea,input{width:100%;box-sizing:border-box;border:1px solid #cad2df;border-radius:10px;padding:12px;margin:7px 0 12px}button{border:0;border-radius:10px;padding:11px 15px;background:#2463eb;color:#fff;font-weight:700;cursor:pointer}.secondary{background:#e9eef9;color:#24416f}.answer{white-space:pre-wrap;background:#f7f9fc;border-left:4px solid #2463eb;padding:14px;border-radius:8px;margin-top:16px}.badge{display:inline-block;border-radius:999px;padding:4px 9px;font-size:12px;background:#e8f7ed;color:#176b37}.warn{background:#fff4df;color:#805300}.item{padding:10px 0;border-bottom:1px solid #edf0f5}.small{font-size:13px}.chart-row{display:grid;grid-template-columns:150px 1fr 34px;gap:8px;align-items:center;font-size:13px;margin:6px 0}.bar{display:block;height:10px;border-radius:5px;background:#2463eb;min-width:4px}.chat{height:360px;overflow:auto;background:#e6edf5;border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:10px;margin:12px 0}.bubble{max-width:82%;padding:11px 13px;border-radius:14px;white-space:pre-wrap;line-height:1.45}.bubble.user{align-self:flex-end;background:#d9fdd3;border-bottom-right-radius:4px}.bubble.bot{align-self:flex-start;background:#fff;border-bottom-left-radius:4px;box-shadow:0 1px 2px #17203318}.bubble.flag{border-left:4px solid #d28b00;background:#fff7e6}.empty{margin:auto;color:#68738a;text-align:center}@media(max-width:700px){.grid{grid-template-columns:1fr}}
 </style></head><body><main class='wrap'><div class='brand'>Studio Desk <span class='badge'>Your Business AI</span></div><p class='muted'>A WhatsApp-style customer desk. Answers come only from the uploaded booking sheet.</p><div class='grid'><section class='card'><h2>Customer chat</h2><div id='chat' class='chat'><div class='empty'>Ask about dates, packages, prices, or booking status.</div></div><textarea id='q' rows='2' placeholder='Type a customer question...' onkeydown='if(event.key==="Enter"&&!event.shiftKey){event.preventDefault();ask()}'></textarea><button onclick='ask()'>Send</button><h3>Hold a date for 24 hours</h3><input id='date' type='date'><input id='name' placeholder='Customer name'><input id='phone' placeholder='Phone number'><button class='secondary' onclick='hold()'>Request hold</button><div id='holdResult'></div></section><aside class='card'><h2>Owner desk</h2><form id='uploadForm'><input id='csv' type='file' accept='.csv,text/csv' required><button type='submit' class='secondary'>Upload booking sheet</button></form><div id='uploadResult' class='small muted'></div><h3>Escalations</h3><p class='muted small'>Questions the sheet could not answer safely.</p><div id='inbox'>Loading…</div></aside></div><section class='card' id='dashboard'><h2>Operating picture</h2><p class='muted small'>Generated from the uploaded sheet; no outside facts are added.</p><div id='dashboardContent'>Loading...</div><p><a href='/api/report.md' target='_blank'>Download grounded operating brief</a></p></section></main><script>
-function loadDashboard(){fetch('/api/dashboard').then(r=>r.json()).then(d=>{let sections=Object.entries(d.charts||{}).map(([field,items])=>{let max=Math.max(...items.map(x=>x[1]),1);return '<h3>'+esc(field.replaceAll('_',' '))+'</h3>'+items.map(x=>'<div class="chart-row"><span>'+esc(x[0])+'</span><span class="bar" style="width:'+Math.max(4,Math.round(x[1]/max*100))+'%"></span><b>'+x[1]+'</b></div>').join('')}).join('');let nums=Object.entries(d.numeric||{}).map(([field,n])=>'<div class="item"><b>'+esc(field.replaceAll('_',' '))+'</b><div class="muted small">total '+Number(n.total).toLocaleString('en-IN')+' · average '+Number(n.average).toLocaleString('en-IN')+'</div></div>').join('');document.getElementById('dashboardContent').innerHTML='<p><b>'+d.rows+'</b> records across <b>'+d.columns.length+'</b> fields.</p>'+sections+'<h3>Visible numeric measures</h3>'+ (nums||'<p class="muted">No numeric measures detected.</p>')+'<h3>Schedule</h3><p>'+d.timeline.past_or_today+' past/today · '+d.timeline.future+' future-dated rows</p><p class="muted small">'+d.limitations.join(' ')+'</p>'}).catch(()=>{document.getElementById('dashboardContent').textContent='Dashboard unavailable.'})} function addMessage(role,text,flag){let chat=document.getElementById('chat');let empty=chat.querySelector('.empty');if(empty)empty.remove();let el=document.createElement('div');el.className='bubble '+role+(flag?' flag':'');el.textContent=text;chat.appendChild(el);chat.scrollTop=chat.scrollHeight} async function ask(){let input=document.getElementById('q');let q=input.value.trim();if(!q)return;addMessage('user',q);input.value='';let r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})});let d=await r.json();let mode=d.synthesis==='openrouter'?'OpenRouter grounded rewrite':'Deterministic grounded answer';addMessage('bot',d.answer+'\\n\\n['+mode+']',Boolean(d.escalated));if(d.escalated)addMessage('bot','Owner review requested.');loadInbox()} async function hold(){let r=await fetch('/api/hold',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({event_date:document.getElementById('date').value,customer_name:document.getElementById('name').value,customer_phone:document.getElementById('phone').value})});let d=await r.json();document.getElementById('holdResult').innerHTML='<div class="answer">'+esc(d.success?'Date held until '+d.expires_at:d.error)+'</div>'} async function loadInbox(){let d=await (await fetch('/api/owner/inbox')).json();document.getElementById('inbox').innerHTML=d.items.length?d.items.map(x=>'<div class="item"><b>'+esc(x.question)+'</b><div class="muted small">'+esc(x.reason)+'</div></div>').join(''):'<p class="muted">No escalations yet.</p>'} document.getElementById('uploadForm').addEventListener('submit',async e=>{e.preventDefault();let f=document.getElementById('csv').files[0];let fd=new FormData();fd.append('file',f);let r=await fetch('/api/upload',{method:'POST',body:fd});let d=await r.json();document.getElementById('uploadResult').textContent=d.error||('Loaded '+d.rows+' rows from '+d.filename);loadDashboard()}); function esc(s){return String(s||'').replace(/[&<>\"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[m]))} loadInbox(); loadDashboard();
+function loadDashboard(){fetch('/api/dashboard').then(r=>r.json()).then(d=>{let sections=Object.entries(d.charts||{}).map(([field,items])=>{let max=Math.max(...items.map(x=>x[1]),1);return '<h3>'+esc(field.replaceAll('_',' '))+'</h3>'+items.map(x=>'<div class="chart-row"><span>'+esc(x[0])+'</span><span class="bar" style="width:'+Math.max(4,Math.round(x[1]/max*100))+'%"></span><b>'+x[1]+'</b></div>').join('')}).join('');let nums=Object.entries(d.numeric||{}).map(([field,n])=>'<div class="item"><b>'+esc(field.replaceAll('_',' '))+'</b><div class="muted small">total '+Number(n.total).toLocaleString('en-IN')+' · average '+Number(n.average).toLocaleString('en-IN')+'</div></div>').join('');document.getElementById('dashboardContent').innerHTML='<p><b>'+d.rows+'</b> records across <b>'+d.columns.length+'</b> fields.</p>'+sections+'<h3>Visible numeric measures</h3>'+ (nums||'<p class="muted">No numeric measures detected.</p>')+'<h3>Schedule</h3><p>'+d.timeline.past_or_today+' past/today · '+d.timeline.future+' future-dated rows</p><p class="muted small">'+d.limitations.join(' ')+'</p>'}).catch(()=>{document.getElementById('dashboardContent').textContent='Dashboard unavailable.'})} function addMessage(role,text,flag){let chat=document.getElementById('chat');let empty=chat.querySelector('.empty');if(empty)empty.remove();let el=document.createElement('div');el.className='bubble '+role+(flag?' flag':'');el.textContent=text;chat.appendChild(el);chat.scrollTop=chat.scrollHeight} let conversationId='';let lastReplyId=0;fetch('/api/session').then(r=>r.json()).then(d=>conversationId=d.conversation_id);async function loadReply(){if(!conversationId)return;let d=await (await fetch('/api/conversation?conversation_id='+encodeURIComponent(conversationId))).json();if(d.id&&d.id!==lastReplyId){lastReplyId=d.id;addMessage('bot','Owner: '+d.reply,false)}} async function ask(){let input=document.getElementById('q');let q=input.value.trim();if(!q)return;addMessage('user',q);input.value='';let r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,conversation_id:conversationId})});let d=await r.json();let mode=d.synthesis==='openrouter'?'OpenRouter grounded rewrite':'Deterministic grounded answer';addMessage('bot',d.answer+'\n\n['+mode+']',Boolean(d.escalated));if(d.escalated)addMessage('bot','Owner review requested.');loadReply()} async function hold(){let r=await fetch('/api/hold',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({event_date:document.getElementById('date').value,customer_name:document.getElementById('name').value,customer_phone:document.getElementById('phone').value})});let d=await r.json();document.getElementById('holdResult').innerHTML='<div class="answer">'+esc(d.success?'Date held until '+d.expires_at:d.error)+'</div>'} async function loadInbox(){let d=await (await fetch('/api/owner/inbox')).json();document.getElementById('inbox').innerHTML=d.items.length?d.items.map(x=>'<div class="item"><b>'+esc(x.question)+'</b><div class="muted small">'+esc(x.reason)+'</div></div>').join(''):'<p class="muted">No escalations yet.</p>'} document.getElementById('uploadForm').addEventListener('submit',async e=>{e.preventDefault();let f=document.getElementById('csv').files[0];let fd=new FormData();fd.append('file',f);let r=await fetch('/api/upload',{method:'POST',body:fd});let d=await r.json();document.getElementById('uploadResult').textContent=d.error||('Loaded '+d.rows+' rows from '+d.filename);loadDashboard()}); function esc(s){return String(s||'').replace(/[&<>\"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[m]))} loadInbox(); loadDashboard(); setInterval(loadReply,3000);
 </script></body></html>"""
+
+
+def customer_page() -> str:
+    """Customer view; owner tools are hidden here and protected at the API."""
+    page = HTML.replace("<aside class='card'>", "<aside class='card' style='display:none'>", 1)
+    page = page.replace("<section class='card' id='dashboard'>", "<section class='card' id='dashboard' style='display:none'>", 1)
+    marker = "<p class='muted'>A WhatsApp-style customer desk. Answers come only from the uploaded booking sheet.</p>"
+    return page.replace(marker, marker + "<p class='small'><a href='/owner'>Owner access</a></p>", 1)
+
+
+OWNER_HTML = """<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Studio Desk Owner</title><style>
+body{font-family:Inter,system-ui,sans-serif;background:#f5f7fb;margin:0;color:#172033}.wrap{max-width:900px;margin:0 auto;padding:28px}.card{background:#fff;border:1px solid #e1e6ef;border-radius:16px;padding:20px;margin:16px 0}.muted{color:#68738a}.item{padding:12px 0;border-bottom:1px solid #edf0f5}input,button{font:inherit;padding:10px;border-radius:8px;border:1px solid #cad2df}button{background:#2463eb;color:#fff;border:0;font-weight:700;cursor:pointer}.reply{display:flex;gap:8px;margin-top:8px}.reply input{flex:1}.small{font-size:13px}
+</style></head><body><main class='wrap'><p><a href='/'>Customer chat</a></p><h1>Studio Desk owner</h1><div class='card'><h2>Upload booking sheet</h2><form id='uploadForm'><input id='csv' type='file' accept='.csv,text/csv' required><button>Upload</button></form><p id='uploadResult' class='muted small'></p></div><div class='card'><h2>Customer escalations</h2><div id='inbox'>Loading…</div></div><div class='card'><h2>Active holds</h2><div id='holds'>Loading…</div></div></main><script>
+const esc=s=>String(s||'').replace(/[&<>\"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[m]));
+async function load(){let inbox=await (await fetch('/api/owner/inbox')).json();document.getElementById('inbox').innerHTML=inbox.items.length?inbox.items.map(x=>'<div class="item"><b>'+esc(x.question)+'</b><div class="muted small">'+esc(x.reason)+'</div><div class="reply"><input id="reply-'+x.id+'" placeholder="Reply to customer"><button onclick="reply(\''+esc(x.conversation_id)+'\','+x.id+')">Send reply</button></div>'+(x.reply?'<div class="small">Sent: '+esc(x.reply)+'</div>':'')+'</div>').join(''):'<p class="muted">No open escalations.</p>';let holds=await (await fetch('/api/owner/holds')).json();document.getElementById('holds').innerHTML=holds.items.length?holds.items.map(x=>'<div class="item"><b>'+esc(x.event_date)+'</b> · '+esc(x.customer_name)+' · '+esc(x.customer_phone)+'<div class="muted small">expires '+esc(x.expires_at)+'</div></div>').join(''):'<p class="muted">No active holds.</p>'}
+async function reply(conversationId,id){let text=document.getElementById('reply-'+id).value.trim();if(!text)return;await fetch('/api/owner/reply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({conversation_id:conversationId,reply:text})});load()}
+document.getElementById('uploadForm').addEventListener('submit',async e=>{e.preventDefault();let f=document.getElementById('csv').files[0],fd=new FormData();fd.append('file',f);let d=await (await fetch('/api/upload',{method:'POST',body:fd})).json();document.getElementById('uploadResult').textContent=d.error||('Loaded '+d.rows+' rows from '+d.filename)});load();setInterval(load,5000);
+</script></body></html>"""
+
+
+def owner_authorized(handler: BaseHTTPRequestHandler) -> bool:
+    expected = os.environ.get("OWNER_PASSWORD", "")
+    header = handler.headers.get("Authorization", "")
+    if not expected or not header.startswith("Basic "):
+        return False
+    try:
+        username, password = base64.b64decode(header[6:]).decode("utf-8").split(":", 1)
+    except (ValueError, UnicodeDecodeError, base64.binascii.Error):
+        return False
+    return username == "owner" and password == expected
+
+
+def require_owner(handler: BaseHTTPRequestHandler) -> bool:
+    if owner_authorized(handler):
+        return True
+    handler.send_response(401)
+    handler.send_header("WWW-Authenticate", 'Basic realm="Studio Desk owner"')
+    handler.end_headers()
+    return False
+
+
+def latest_reply(conversation_id: str) -> dict:
+    if not conversation_id:
+        return {}
+    conn = db()
+    row = conn.execute("SELECT id, reply, reply_created_at FROM escalations WHERE conversation_id = ? AND reply IS NOT NULL ORDER BY id DESC LIMIT 1", (conversation_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else {}
+
+
+def browser_session(handler: BaseHTTPRequestHandler) -> tuple[str, bool]:
+    cookies = {}
+    for item in handler.headers.get("Cookie", "").split(";"):
+        if "=" in item:
+            key, value = item.strip().split("=", 1)
+            cookies[key] = value
+    session_id = cookies.get("desk_session", "")
+    created = False
+    if not re.fullmatch(r"[0-9a-f-]{36}", session_id):
+        session_id = str(uuid.uuid4())
+        created = True
+    with SESSION_LOCK:
+        SESSIONS.setdefault(session_id, set())
+    return session_id, created
+
+
+def session_conversation(session_id: str) -> str:
+    with SESSION_LOCK:
+        values = SESSIONS.setdefault(session_id, set())
+        if not values:
+            values.add(str(uuid.uuid4()))
+        return sorted(values)[0]
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -489,13 +575,35 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/report': return self.send_json(build_operating_brief(load_bookings()))
         if path == '/api/report.md': return self.send_text(brief_markdown(load_bookings()), 'text/markdown; charset=utf-8')
         if path == '/api/owner/inbox':
+            if not require_owner(self): return
             conn=db(); items=[dict(x) for x in conn.execute('SELECT * FROM escalations WHERE status = "open" ORDER BY id DESC')]; conn.close(); return self.send_json({'items':items})
+        if path == '/api/owner/holds':
+            if not require_owner(self): return
+            conn=db(); items=[dict(x) for x in conn.execute('SELECT * FROM holds WHERE expires_at > ? ORDER BY event_date', (datetime.now(timezone.utc).isoformat(),))]; conn.close(); return self.send_json({'items':items})
+        if path == '/api/session':
+            session_id, _ = browser_session(self)
+            return self.send_json({'conversation_id': session_conversation(session_id)})
+        if path == '/api/conversation':
+            query = parse_qs(urlparse(self.path).query)
+            session_id, _ = browser_session(self)
+            conversation_id = str(query.get('conversation_id', [''])[0])[:100]
+            with SESSION_LOCK:
+                allowed = conversation_id in SESSIONS.get(session_id, set())
+            if not allowed:
+                return self.send_json({'error': 'Conversation not found.'}, 404)
+            return self.send_json(latest_reply(conversation_id))
+        if path == '/owner':
+            if not require_owner(self): return
+            return self.send_text(OWNER_HTML, 'text/html; charset=utf-8')
         if path == '/':
-            body=HTML.encode(); self.send_response(200); self.send_header('Content-Type','text/html; charset=utf-8'); self.send_header('Content-Length',str(len(body))); self.end_headers(); self.wfile.write(body); return
+            body=customer_page().encode(); session_id, created = browser_session(self); self.send_response(200); self.send_header('Content-Type','text/html; charset=utf-8');
+            if created: self.send_header('Set-Cookie', f'desk_session={session_id}; HttpOnly; SameSite=Lax')
+            self.send_header('Content-Length',str(len(body))); self.end_headers(); self.wfile.write(body); return
         self.send_error(404)
     def do_POST(self):
         path=urlparse(self.path).path
         if path == '/api/upload':
+            if not require_owner(self): return
             try:
                 content, filename = parse_uploaded_file(self)
                 return self.send_json(replace_uploaded_csv(content, filename))
@@ -503,10 +611,26 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({'error': str(exc)}, 400)
         length=int(self.headers.get('Content-Length','0')); data=json.loads(self.rfile.read(length) or '{}')
         if path == '/api/chat':
-            result = customer_answer(str(data.get('question', '')), load_bookings())
+            session_id, _ = browser_session(self)
+            conversation_id = str(data.get('conversation_id', '')).strip()[:100] or session_conversation(session_id)
+            with SESSION_LOCK:
+                allowed = conversation_id in SESSIONS.get(session_id, set())
+            if not allowed:
+                return self.send_json({'error': 'A customer session is required.'}, 400)
+            result = customer_answer(str(data.get('question', '')), load_bookings(), conversation_id)
             # Provenance is retained internally and in owner reports, but customer replies stay conversational.
             result['answer'] = re.sub(r"\n\nSource:.*$", "", result.get('answer', ''), flags=re.DOTALL).strip()
             return self.send_json(result)
+        if path == '/api/owner/reply':
+            if not require_owner(self): return
+            conversation_id = str(data.get('conversation_id', '')).strip()[:100]
+            reply = str(data.get('reply', '')).strip()[:2000]
+            if not conversation_id or not reply:
+                return self.send_json({'error': 'Conversation and reply are required.'}, 400)
+            now = datetime.now(timezone.utc).isoformat()
+            with DB_LOCK:
+                conn = db(); cur = conn.execute('UPDATE escalations SET reply = ?, reply_created_at = ?, status = "replied" WHERE conversation_id = ? AND status = "open"', (reply, now, conversation_id)); conn.commit(); conn.close()
+            return self.send_json({'success': cur.rowcount > 0})
         if path == '/api/hold':
             if not re.fullmatch(r'20\d{2}-\d{2}-\d{2}', str(data.get('event_date',''))) or not str(data.get('customer_name','')).strip() or not str(data.get('customer_phone','')).strip(): return self.send_json({'success':False,'error':'Enter a valid date, customer name, and phone number.'},400)
             return self.send_json(create_hold(data['event_date'], data['customer_name'], data['customer_phone']))

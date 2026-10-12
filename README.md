@@ -58,9 +58,22 @@ Will bookings increase next month?
 
 Choose a date and customer name, then select **Request hold**. A free date is held for 24 hours. The same date cannot be held twice while the first hold is active. Dates already present in the CSV cannot be held.
 
+## Owner desk
+
+The customer page keeps owner tools hidden. Set a local owner password before starting the app:
+
+```powershell
+$env:OWNER_PASSWORD = "choose-a-local-demo-password"
+py -3 app.py
+```
+
+Open `http://127.0.0.1:8787/owner` and sign in with username `owner`. The owner desk can upload a replacement CSV, review escalations, see active holds, and reply to an escalated customer conversation. Replies are returned to the same browser conversation; the customer page does not expose the owner APIs without authentication.
+
 ## Owner dashboard
 
 The operating picture shows row and field counts, categorical distributions, numeric totals and averages, and past/future dates. It is descriptive only; it does not infer causes, forecasts, policy, or business decisions.
+
+The demo is intentionally bounded: it does not send WhatsApp messages, connect to a live calendar, authenticate real customers, or answer unsupported business questions. A real deployment would need those controls and a hosted service.
 
 ## Tests
 

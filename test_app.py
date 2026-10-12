@@ -93,6 +93,12 @@ class AssignmentDeskTests(unittest.TestCase):
         self.assertIn("Delhi", app.customer_answer("what city is SS-2043 in", rows)["answer"])
         self.assertIn("Wedding Day", app.customer_answer("what package do I have SS-2043", rows)["answer"])
         self.assertIn("booking ID", app.customer_answer("what city am I in", rows)["answer"])
+
+    def test_escalations_keep_conversation_and_reply_fields(self):
+        connection = app.db()
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(escalations)")}
+        connection.close()
+        self.assertTrue({"conversation_id", "reply", "reply_created_at"}.issubset(columns))
     def test_unsupported_cause_escalates(self):
         result = app.grounded_answer("Why are wedding packages expensive?", app.load_bookings())
         self.assertTrue(result["escalated"])
