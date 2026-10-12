@@ -100,6 +100,17 @@ class AssignmentDeskTests(unittest.TestCase):
         self.assertIn("Wedding Day", app.customer_answer("what package do I have SS-2043", rows)["answer"])
         self.assertIn("booking ID", app.customer_answer("what city am I in", rows)["answer"])
 
+    def test_owner_reply_is_available_to_same_customer_conversation(self):
+        conversation_id = "demo-conversation"
+        app.escalate("Can you make an exception?", "The sheet cannot establish exceptions.", conversation_id)
+        now = "2026-01-01T00:00:00+00:00"
+        conn = app.db()
+        conn.execute("UPDATE escalations SET reply = ?, reply_created_at = ?, status = 'replied' WHERE conversation_id = ?", ("I will review this with you.", now, conversation_id))
+        conn.commit(); conn.close()
+        reply = app.latest_reply(conversation_id)
+        self.assertEqual(reply["reply"], "I will review this with you.")
+        self.assertEqual(reply["reply_created_at"], now)
+
     def test_escalations_keep_conversation_and_reply_fields(self):
         connection = app.db()
         columns = {row[1] for row in connection.execute("PRAGMA table_info(escalations)")}
