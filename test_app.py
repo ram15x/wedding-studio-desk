@@ -61,9 +61,9 @@ class AssignmentDeskTests(unittest.TestCase):
 
     def test_customer_chat_answers_safe_public_catalogue_aggregates(self):
         rows = app.load_bookings()
-        self.assertIn("wedding", app.customer_answer("Which event type is most common?", rows)["answer"])
-        self.assertIn("Delhi", app.customer_answer("Which city has the most bookings?", rows)["answer"])
         self.assertIn("6 bookings", app.customer_answer("How many bookings are confirmed?", rows)["answer"])
+        self.assertIn("Owner analytics", app.customer_answer("Which city has the most bookings?", rows)["answer"])
+        self.assertIn("Owner analytics", app.customer_answer("Which event type is most common?", rows)["answer"])
 
     def test_customer_questions_cover_twenty_realistic_phrasings(self):
         rows = app.load_bookings()
@@ -82,7 +82,7 @@ class AssignmentDeskTests(unittest.TestCase):
             ("what date is SS-2048", "2027-01-17"),
             ("what is the event for SS-2031", "wedding"),
             ("what is the customer name for SS-2043", "Ananya Gupta"),
-            ("which city has the most bookings", "Delhi"),
+            ("which city has the most bookings", "Owner analytics"),
             ("how many bookings are confirmed", "6 bookings"),
             ("what is my balance", "Please share your booking ID"),
             ("will bookings increase next month", "owner for review"),

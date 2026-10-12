@@ -266,11 +266,17 @@ def answer_with_optional_synthesis(question: str, rows: list[dict[str, str]], co
 def customer_answer(question: str, rows: list[dict[str, str]], conversation_id: str = "") -> dict:
     """Return a customer-safe answer; aggregate owner analytics stay private."""
     lowered = question.lower()
-    # Public catalogue/status facts are safe to answer without a booking ID.
-    # Personal balances, payment totals, averages, and other owner analytics
-    # remain private unless the customer identifies their own booking.
-    if not re.search(r"\bSS-\d+\b", question, re.IGNORECASE) and any(term in lowered for term in ("total balance", "total advance", "total refund", "average balance", "average advance", "average refund")):
-        return {"answer": "I can help with a specific booking, date, package, or availability question. Please share your booking ID for personal details.", "escalated": False, "synthesis": "deterministic"}
+    # Customers get dates, package prices, and their own booking details. Keep
+    # owner analytics (averages, totals, rankings, comparisons) off this path;
+    # the explicitly supported confirmed-status count remains customer-safe.
+    status_count = bool(re.search(r"how many .*booking(?:s)? .*\b(confirmed|tentative|completed)\b", lowered))
+    owner_analytics = (
+        "average" in lowered or "most common" in lowered or "most bookings" in lowered
+        or "which city has" in lowered or "compare" in lowered or "versus" in lowered
+        or "total" in lowered
+    )
+    if not re.search(r"\bSS-\d+\b", question, re.IGNORECASE) and owner_analytics and not status_count:
+        return {"answer": "I can help with a date, package, price, availability, or a specific booking. Owner analytics are available in the owner desk.", "escalated": False, "synthesis": "deterministic"}
     return answer_with_optional_synthesis(question, rows, conversation_id)
 
 
