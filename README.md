@@ -25,6 +25,15 @@ $env:OPENROUTER_MODEL = "openai/gpt-4o-mini"
 py -3 app.py
 ```
 
+For a local fallback pool, provide comma-separated values. These are read only from the process environment; do not commit them to `.env` or Git:
+
+```powershell
+$env:OPENROUTER_API_KEYS = "key-one,key-two"
+$env:OPENROUTER_MODELS = "openai/gpt-4o-mini,google/gemini-2.0-flash"
+```
+
+The app tries each configured key/model pair after provider failures such as rate limits, then returns to the deterministic engine. This improves availability but does not bypass provider quotas or guarantee free usage.
+
 The UI labels an intent-assisted response as **OpenRouter grounded rewrite** only when a separately accepted prose rewrite is enabled. The default fallback label is **Deterministic grounded answer**. A key is not required to run the demo safely.
 
 The prose rewrite path is disabled by default because it would send the verified answer (which may contain booking facts) to OpenRouter. Enable it only if that disclosure is acceptable:

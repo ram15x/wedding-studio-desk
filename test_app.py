@@ -213,6 +213,24 @@ class AssignmentDeskTests(unittest.TestCase):
         self.assertTrue(result["intent_assisted"])
         self.assertIn("6 bookings", result["answer"])
 
+    def test_openrouter_pool_rotates_key_and_model_on_provider_failure(self):
+        with mock.patch.dict(app.os.environ, {"OPENROUTER_API_KEYS": "key-a,key-b", "OPENROUTER_MODELS": "model-a,model-b"}, clear=True):
+            self.assertEqual(app._openrouter_options(), [("key-a", "model-a"), ("key-b", "model-b")])
+            class Response:
+                def __enter__(self): return self
+                def __exit__(self, *args): return False
+                def read(self): return b'{"ok": true}'
+            calls = []
+            def fake_urlopen(request, timeout):
+                calls.append(request.headers["Authorization"])
+                if len(calls) == 1:
+                    raise app.urllib.error.HTTPError(request.full_url, 429, "rate limited", {}, None)
+                return Response()
+            with mock.patch("app.urllib.request.urlopen", side_effect=fake_urlopen):
+                result = app._openrouter_call([], 10)
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(calls, ["Bearer key-a", "Bearer key-b"])
+
 
 if __name__ == "__main__":
     unittest.main()

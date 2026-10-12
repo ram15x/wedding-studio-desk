@@ -35,6 +35,32 @@ INTENT_KINDS = {"date_availability", "package_price", "count", "most_common", "p
 INTENT_FIELDS = {"event_type", "package", "city", "status", "album_stage", "package_price", "advance_paid", "balance_due", ""}
 
 
+def _openrouter_options() -> list[tuple[str, str]]:
+    """Read a local provider pool without ever logging or persisting secrets."""
+    keys = [item.strip() for item in os.environ.get("OPENROUTER_API_KEYS", "").replace(";", ",").split(",") if item.strip()]
+    if not keys and os.environ.get("OPENROUTER_API_KEY", "").strip():
+        keys = [os.environ["OPENROUTER_API_KEY"].strip()]
+    models = [item.strip() for item in os.environ.get("OPENROUTER_MODELS", "").replace(";", ",").split(",") if item.strip()]
+    if not models and os.environ.get("OPENROUTER_MODEL", "").strip():
+        models = [os.environ["OPENROUTER_MODEL"].strip()]
+    if not keys or not models:
+        return []
+    return [(key, models[index % len(models)]) for index, key in enumerate(keys)]
+
+
+def _openrouter_call(messages: list[dict], max_tokens: int) -> dict | None:
+    """Try configured key/model pairs; never return an unvalidated provider body."""
+    for api_key, model in _openrouter_options():
+        request_body = json.dumps({"model": model, "temperature": 0, "max_tokens": max_tokens, "messages": messages}).encode("utf-8")
+        request = urllib.request.Request(OPENROUTER_URL, data=request_body, headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "HTTP-Referer": "http://localhost", "X-Title": "Wedding Studio Desk"}, method="POST")
+        try:
+            with urllib.request.urlopen(request, timeout=OPENROUTER_TIMEOUT) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except (urllib.error.HTTPError, urllib.error.URLError, OSError, TimeoutError, ValueError, json.JSONDecodeError):
+            continue
+    return None
+
+
 def load_bookings() -> list[dict[str, str]]:
     with CSV_PATH.open(newline="", encoding="utf-8-sig") as handle:
         return list(csv.DictReader(handle))
@@ -129,9 +155,7 @@ def source_note() -> str:
 
 def _model_intent(question: str, columns: list[str]) -> dict | None:
     """Classify a question into a small validated shape; never compute answers."""
-    api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
-    model = os.environ.get("OPENROUTER_MODEL", "").strip()
-    if not api_key or not model:
+    if not _openrouter_options():
         return None
     schema = {"kind": "date_availability|package_price|count|most_common|personal_lookup|unsupported", "field": "column or empty", "value": "category/status/package or empty", "date": "YYYY-MM-DD or empty", "booking_id": "SS-#### or empty"}
     prompt = (
@@ -140,11 +164,10 @@ def _model_intent(question: str, columns: list[str]) -> dict | None:
         "Use unsupported for causes, recommendations, forecasts, or policy questions.\n"
         f"VISIBLE COLUMNS: {', '.join(columns)}\nOUTPUT SHAPE: {json.dumps(schema)}\nQUESTION: {question}"
     )
-    payload = json.dumps({"model": model, "temperature": 0, "max_tokens": 160, "messages": [{"role": "system", "content": "You classify only; output strict JSON."}, {"role": "user", "content": prompt}]}).encode("utf-8")
-    request = urllib.request.Request(OPENROUTER_URL, data=payload, headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "HTTP-Referer": "http://localhost", "X-Title": "Wedding Studio Desk"}, method="POST")
     try:
-        with urllib.request.urlopen(request, timeout=OPENROUTER_TIMEOUT) as response:
-            body = json.loads(response.read().decode("utf-8"))
+        body = _openrouter_call([{"role": "system", "content": "You classify only; output strict JSON."}, {"role": "user", "content": prompt}], 160)
+        if body is None:
+            return None
         content = body["choices"][0]["message"]["content"]
         if not isinstance(content, str):
             return None
@@ -160,7 +183,7 @@ def _model_intent(question: str, columns: list[str]) -> dict | None:
         if result["booking_id"] and not re.fullmatch(r"SS-\d+", result["booking_id"], re.IGNORECASE):
             return None
         return result
-    except (urllib.error.URLError, OSError, TimeoutError, ValueError, KeyError, IndexError, TypeError, json.JSONDecodeError):
+    except (ValueError, KeyError, IndexError, TypeError, json.JSONDecodeError):
         return None
 
 
@@ -187,10 +210,9 @@ def _model_synthesis(question: str, grounded: dict) -> str | None:
     missing configuration, network error, malformed response, or changed fact
     falls back to the deterministic answer.
     """
-    api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
-    model = os.environ.get("OPENROUTER_MODEL", "").strip()
+    has_provider = bool(_openrouter_options())
     allow_grounded_data = os.environ.get("OPENROUTER_ALLOW_GROUNDED_DATA", "").lower() in {"1", "true", "yes"}
-    if not api_key or not model or not allow_grounded_data or grounded.get("escalated"):
+    if not has_provider or not allow_grounded_data or grounded.get("escalated"):
         return None
     baseline = str(grounded.get("answer", ""))
     prompt = (
@@ -205,29 +227,10 @@ def _model_synthesis(question: str, grounded: dict) -> str | None:
         "Return only the reply text.\n\n"
         f"QUESTION:\n{question}\n\nVERIFIED ANSWER:\n{baseline}"
     )
-    payload = json.dumps({
-        "model": model,
-        "temperature": 0,
-        "max_tokens": 500,
-        "messages": [
-            {"role": "system", "content": "You are a grounded editor. Never invent."},
-            {"role": "user", "content": prompt},
-        ],
-    }).encode("utf-8")
-    request = urllib.request.Request(
-        OPENROUTER_URL,
-        data=payload,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "http://localhost",
-            "X-Title": "Wedding Studio Desk",
-        },
-        method="POST",
-    )
     try:
-        with urllib.request.urlopen(request, timeout=OPENROUTER_TIMEOUT) as response:
-            body = json.loads(response.read().decode("utf-8"))
+        body = _openrouter_call([{ "role": "system", "content": "You are a grounded editor. Never invent."}, {"role": "user", "content": prompt}], 500)
+        if body is None:
+            return None
         content = body["choices"][0]["message"]["content"]
         if not isinstance(content, str) or not content.strip():
             return None
@@ -239,7 +242,7 @@ def _model_synthesis(question: str, grounded: dict) -> str | None:
         if source_note() not in content:
             content = content.rstrip() + "\n\n" + source_note()
         return content.strip()
-    except (urllib.error.URLError, OSError, TimeoutError, ValueError, KeyError, IndexError, TypeError):
+    except (ValueError, KeyError, IndexError, TypeError, json.JSONDecodeError):
         return None
 
 
