@@ -154,11 +154,23 @@ class AssignmentDeskTests(unittest.TestCase):
         self.assertIn("city", dashboard["charts"])
         self.assertIn("package_price", dashboard["numeric_fields"])
 
+    def test_customer_surface_hides_owner_tools_and_internal_mode_labels(self):
+        customer = app.customer_page()
+        self.assertIn("href='/owner'", customer)
+        self.assertIn("style='display:none'", customer)
+        self.assertNotIn('OpenRouter grounded rewrite', customer)
+        self.assertNotIn('Deterministic grounded answer', customer)
+
     def test_customer_and_owner_pages_link_to_each_other(self):
         customer = app.customer_page()
         self.assertIn("href='/owner'", customer)
         self.assertIn("href='/'", customer)
         self.assertIn("href='/owner'", app.OWNER_HTML)
+
+    def test_package_price_reply_is_natural(self):
+        result = app.grounded_answer("How much is the Full Package?", app.load_bookings())
+        self.assertIn("Full Package has recorded prices", result["answer"])
+        self.assertNotIn("Full Package package", result["answer"])
 
     def test_generic_numeric_total_and_future_schedule_questions(self):
         total = app.grounded_answer("What is the total advance paid?", app.load_bookings())
