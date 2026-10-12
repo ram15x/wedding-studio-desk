@@ -157,10 +157,10 @@ def _model_intent(question: str, columns: list[str]) -> dict | None:
     """Classify a question into a small validated shape; never compute answers."""
     if not _openrouter_options():
         return None
-    schema = {"kind": "date_availability|package_price|count|most_common|personal_lookup|unsupported", "field": "column or empty", "value": "category/status/package or empty", "date": "YYYY-MM-DD or empty", "booking_id": "SS-#### or empty"}
+    schema = {"kind": "date_availability|package_price|count|most_common|personal_lookup|unsupported", "field": "column or empty", "value": "category/status/package or empty", "date": "YYYY-MM-DD or empty", "booking_id": "SS-#### or empty", "name": "customer name from the question or empty"}
     prompt = (
         "Classify this customer question for a booking-sheet assistant. Return JSON only with exactly "
-        "kind, field, value, date, booking_id. Do not answer, infer facts, or invent values. "
+        "kind, field, value, date, booking_id, name. Do not answer, infer facts, or invent values. "
         "Use unsupported for causes, recommendations, forecasts, or policy questions.\n"
         f"VISIBLE COLUMNS: {', '.join(columns)}\nOUTPUT SHAPE: {json.dumps(schema)}\nQUESTION: {question}"
     )
@@ -175,7 +175,7 @@ def _model_intent(question: str, columns: list[str]) -> dict | None:
         parsed = json.loads(match.group(0) if match else content)
         if not isinstance(parsed, dict) or parsed.get("kind") not in INTENT_KINDS:
             return None
-        result = {key: str(parsed.get(key, "") or "").strip() for key in ("kind", "field", "value", "date", "booking_id")}
+        result = {key: str(parsed.get(key, "") or "").strip() for key in ("kind", "field", "value", "date", "booking_id", "name")}
         if result["field"] and result["field"] not in columns and result["field"] not in INTENT_FIELDS:
             return None
         if result["date"] and not re.fullmatch(r"20\d{2}-\d{2}-\d{2}", result["date"]):
@@ -519,9 +519,9 @@ def grounded_answer(question: str, rows: list[dict[str, str]], conversation_id: 
             status = row.get("status", "recorded")
             availability = "not available for a new hold"
             details = ", ".join(f"{field.replace('_', ' ')}: {row.get(field, '')}" for field in ("event_type", "package", "city", "status", "album_stage") if row.get(field))
-            return {"answer": f"{target} is {availability}. The uploaded sheet has one booking row ({details}). This is based only on the current file; confirm any change with the studio owner.\n\n{source_note()}", "escalated": False}
+            return {"answer": f"That date is already booked, so it is not available for a new hold. I can't share another customer's booking details. If this is your booking, share your booking ID and I can check your details securely.\n\n{source_note()}", "escalated": False}
         if target:
-            return {"answer": f"I do not see a booking on {target} in the current sheet. It appears free here. If you want it, enter your name and phone below and request a 24-hour hold.", "escalated": False, "hold_offer": target}
+            return {"answer": f"That date looks free in the current booking sheet. If you'd like it, enter your name and phone below and I can hold it for 24 hours.", "escalated": False, "hold_offer": target}
     if "future" in q or "upcoming" in q or "schedule" in q:
         if date_field:
             today = datetime.now(timezone.utc).date().isoformat()

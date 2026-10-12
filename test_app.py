@@ -70,8 +70,8 @@ class AssignmentDeskTests(unittest.TestCase):
         cases = [
             ("is 14 december booked", "not available"),
             ("is 2026-11-22 available", "not available"),
-            ("can I book 20 December 2026", "appears free"),
-            ("hold 20 December 2026", "appears free"),
+            ("can I book 20 December 2026", "looks free"),
+            ("hold 20 December 2026", "looks free"),
             ("how much is full package", "185,000"),
             ("what does wedding day cost", "120,000"),
             ("what is my balance for SS-2043", "80,000"),
@@ -134,6 +134,8 @@ class AssignmentDeskTests(unittest.TestCase):
         result = app.grounded_answer("Is 2026-11-22 available?", app.load_bookings())
         self.assertFalse(result["escalated"])
         self.assertIn("not available", result["answer"])
+        self.assertNotIn("package:", result["answer"])
+        self.assertIn("can't share", result["answer"])
 
     def test_dashboard_is_grounded_in_uploaded_rows(self):
         dashboard = app.dataset_dashboard(app.load_bookings())
@@ -207,7 +209,7 @@ class AssignmentDeskTests(unittest.TestCase):
             def __enter__(self): return self
             def __exit__(self, *args): return False
             def read(self):
-                return b'{"choices":[{"message":{"content":"{\\"kind\\":\\"count\\",\\"field\\":\\"status\\",\\"value\\":\\"confirmed\\",\\"date\\":\\"\\",\\"booking_id\\":\\"\\"}"}}]}'
+                return b'{"choices":[{"message":{"content":"{\\"kind\\":\\"count\\",\\"field\\":\\"status\\",\\"value\\":\\"confirmed\\",\\"date\\":\\"\\",\\"booking_id\\":\\"\\",\\"name\\":\\"\\"}"}}]}'
         def fake_urlopen(request, timeout):
             captured["body"] = request.data.decode("utf-8")
             return Response()
