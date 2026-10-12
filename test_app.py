@@ -205,6 +205,15 @@ class AssignmentDeskTests(unittest.TestCase):
         reception = app.customer_answer("Do you have a reception package?", rows)
         self.assertFalse(reception["escalated"])
         self.assertIn("Reception Only", reception["answer"])
+        haldi = app.customer_answer("Do you provide a haldi shoot?", rows)
+        self.assertFalse(haldi["escalated"])
+        self.assertIn("Haldi + Mehndi", haldi["answer"])
+
+    def test_customer_can_ask_what_data_is_available(self):
+        result = app.customer_answer("What data is in the sheet?", app.load_bookings())
+        self.assertFalse(result["escalated"])
+        self.assertIn("booking id", result["answer"])
+        self.assertIn("event date", result["answer"])
 
     def test_package_price_reply_is_natural(self):
         result = app.grounded_answer("How much is the Full Package?", app.load_bookings())

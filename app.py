@@ -418,7 +418,7 @@ def grounded_answer(question: str, rows: list[dict[str, str]], conversation_id: 
         return {"answer": "Ask a question about bookings, dates, packages, prices, status, or album stage.", "escalated": False}
     if any(word in q for word in ("why", "cause", "reason", "should we", "recommend", "forecast", "will bookings", "bookings increase", "bookings decrease", "bookings decline")):
         return escalate(question, "The CSV contains booking records but does not establish causes or business decisions.", conversation_id)
-    if ("what does" in q or "represent" in q or "business" in q) and not any(term in q for term in ("cost", "price", "package")):
+    if ("what does" in q or "represent" in q or "business" in q or "what data" in q or "what's in" in q or "whats in" in q) and not any(term in q for term in ("cost", "price", "package")):
         labels = ", ".join(field.replace("_", " ") for field in columns)
         return {"answer": f"The uploaded sheet contains {len(rows)} records with these visible fields: {labels}. It can support descriptive counts, numeric summaries, comparisons, and date lookups where those fields are populated. It does not by itself establish business policies, causes, capacity, or forecasts.\n\n{source_note()}", "escalated": False}
     booking_match = re.search(r"\bSS-\d+\b", question, re.IGNORECASE)
@@ -448,7 +448,7 @@ def grounded_answer(question: str, rows: list[dict[str, str]], conversation_id: 
         if "status" in q or "booking" in q:
             return {"answer": f"Booking {booking_id} is {row.get('status', 'not available')}. It is scheduled for {row.get('event_date', 'an unknown date')}.", "escalated": False}
         return {"answer": f"Booking {booking_id} is for a {row.get('event_type', 'recorded event')} on {row.get('event_date', 'an unknown date')}.", "escalated": False}
-    if booking_id is None and ("package" in q or "service" in q or "photograph" in q) and any(term in q for term in ("offer", "have", "available", "listed", "options", "provide", "do you")):
+    if booking_id is None and ("package" in q or "service" in q or "photograph" in q or "shoot" in q) and any(term in q for term in ("offer", "have", "available", "listed", "options", "provide", "do you")):
         packages = sorted({row.get("package", "").strip() for row in rows if row.get("package", "").strip()})
         requested = None
         for package in packages:
