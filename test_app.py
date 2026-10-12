@@ -87,7 +87,7 @@ class AssignmentDeskTests(unittest.TestCase):
             ("what is my balance", "Please share your booking ID"),
             ("will bookings increase next month", "owner for review"),
             ("can I get a refund", "owner for review"),
-            ("what services do you offer", "owner for review"),
+            ("what services do you offer", "Full Package"),
         ]
         for question, expected in cases:
             with self.subTest(question=question):
@@ -187,6 +187,15 @@ class AssignmentDeskTests(unittest.TestCase):
         self.assertIn("href='/owner'", customer)
         self.assertIn("href='/'", customer)
         self.assertIn("href='/owner'", app.OWNER_HTML)
+
+    def test_package_catalogue_matches_requested_service_terms(self):
+        rows = app.load_bookings()
+        maternity = app.customer_answer("Do you have maternity photography?", rows)
+        self.assertFalse(maternity["escalated"])
+        self.assertIn("Maternity Shoot", maternity["answer"])
+        booking = app.customer_answer("What is the price for SS-2031?", rows)
+        self.assertIn("Full Package,", booking["answer"])
+        self.assertNotIn("Full Package package", booking["answer"])
 
     def test_package_catalogue_answers_customer_availability(self):
         rows = app.load_bookings()

@@ -440,16 +440,22 @@ def grounded_answer(question: str, rows: list[dict[str, str]], conversation_id: 
             return {"answer": f"The customer name on booking {booking_id} is {row.get('customer_name', 'not available')}.", "escalated": False}
         if "package" in q or "price" in q or "cost" in q:
             package = row.get('package', 'not available')
+            package_label = package if package.lower().endswith("package") else f"{package} package"
             price = display_number('package_price', float(row.get('package_price', 0))) if row.get('package_price') else 'not available'
-            return {"answer": f"Booking {booking_id} is for the {package} package, listed at {price}.", "escalated": False}
+            return {"answer": f"Booking {booking_id} is for the {package_label}, listed at {price}.", "escalated": False}
         if "date" in q or "when" in q:
             return {"answer": f"Booking {booking_id} is scheduled for {row.get('event_date', 'an unknown date')}.", "escalated": False}
         if "status" in q or "booking" in q:
             return {"answer": f"Booking {booking_id} is {row.get('status', 'not available')}. It is scheduled for {row.get('event_date', 'an unknown date')}.", "escalated": False}
         return {"answer": f"Booking {booking_id} is for a {row.get('event_type', 'recorded event')} on {row.get('event_date', 'an unknown date')}.", "escalated": False}
-    if booking_id is None and "package" in q and any(term in q for term in ("offer", "have", "available", "listed", "options", "provide")):
+    if booking_id is None and ("package" in q or "service" in q or "photograph" in q) and any(term in q for term in ("offer", "have", "available", "listed", "options", "provide", "do you")):
         packages = sorted({row.get("package", "").strip() for row in rows if row.get("package", "").strip()})
-        requested = next((package for package in packages if package.lower() in q or package.lower().replace(" + ", " ").replace("-", " ") in q), None)
+        requested = None
+        for package in packages:
+            tokens = [token for token in re.findall(r"[a-z0-9]+", package.lower()) if token not in {"package", "only", "and"}]
+            if tokens and any(token in q for token in tokens):
+                requested = package
+                break
         if requested:
             return {"answer": f"Yes, {requested} appears in the current booking sheet. Ask me for its recorded price if you would like to check it.", "escalated": False}
         if packages:
