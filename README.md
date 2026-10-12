@@ -107,3 +107,9 @@ py -3 -m unittest -q test_app.py
 
 The local SQLite file `assignment.db` and Python caches are intentionally ignored by Git.
 
+## Free Render deployment
+
+Create a new Render Web Service from this repository and choose **Blueprint**; Render will read `render.yaml`. Set `OWNER_PASSWORD` and `OPENROUTER_API_KEY` as secret environment values in Render. Do not commit either value. The service uses the supplied CSV and the standard-library Python server, so no Docker or paid dependency is required.
+
+This free deployment is a review/demo environment: its local filesystem is ephemeral, so uploaded replacement files, holds, and owner replies can be lost when the service restarts. A production deployment needs durable storage and real customer authentication.
+

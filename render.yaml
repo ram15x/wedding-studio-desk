@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: wedding-studio-desk
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python app.py
+    envVars:
+      - key: ASSIGNMENT_HOST
+        value: 0.0.0.0
+      - key: ASSIGNMENT_PORT
+        value: 10000
+      - key: OWNER_PASSWORD
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        value: openai/gpt-4o-mini
