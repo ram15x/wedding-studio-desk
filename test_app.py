@@ -178,6 +178,10 @@ class AssignmentDeskTests(unittest.TestCase):
         self.assertNotIn('OpenRouter grounded rewrite', customer)
         self.assertNotIn('Deterministic grounded answer', customer)
 
+    def test_owner_page_contains_owner_dashboard(self):
+        self.assertIn("id='dashboardContent'", app.OWNER_HTML)
+        self.assertIn("/api/dashboard", app.OWNER_HTML)
+
     def test_customer_and_owner_pages_link_to_each_other(self):
         customer = app.customer_page()
         self.assertIn("href='/owner'", customer)
