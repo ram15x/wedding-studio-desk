@@ -66,7 +66,7 @@ What is my balance for SS-2043?
 Where is my album? SS-2043
 ```
 
-The answer includes the source file and uses only the uploaded rows.
+Owner reports retain the source file and customer answers use only the uploaded rows; the customer view omits internal provenance labels for readability.
 
 Customer chat does not expose totals, averages, or other customers' bookings. Personal questions require the booking ID. Questions that require information absent from the CSV are escalated instead of guessed:
 
