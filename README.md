@@ -11,7 +11,7 @@ It loads the supplied booking CSV and provides:
 - 24-hour date holds with duplicate protection
 - owner upload of a replacement booking sheet
 
-No external model, API key, database server, or Docker setup is required.
+No external model, API key, or database server is required.
 
 ## Pull and run
 
@@ -70,3 +70,4 @@ py -3 -m unittest -q test_app.py
 ```
 
 The local SQLite file `assignment.db` and Python caches are intentionally ignored by Git.
+
