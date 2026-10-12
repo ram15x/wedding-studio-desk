@@ -38,14 +38,15 @@ Which event type is most common?
 What packages are listed?
 What is the average package price?
 How many bookings are confirmed?
-Which city has the most bookings?
-Is 2026-11-22 available?
-What bookings are upcoming?
+Is 14 December booked?
+How much is the Full Package?
+What is my balance for SS-2043?
+Where is my album? SS-2043
 ```
 
 The answer includes the source file and uses only the uploaded rows.
 
-Questions that require information absent from the CSV are escalated instead of guessed:
+Customer chat does not expose totals, averages, or other customers' bookings. Personal questions require the booking ID. Questions that require information absent from the CSV are escalated instead of guessed:
 
 ```text
 Why did bookings decline?
