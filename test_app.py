@@ -152,6 +152,12 @@ class AssignmentDeskTests(unittest.TestCase):
         self.assertIn("city", dashboard["charts"])
         self.assertIn("package_price", dashboard["numeric_fields"])
 
+    def test_customer_and_owner_pages_link_to_each_other(self):
+        customer = app.customer_page()
+        self.assertIn("href='/owner'", customer)
+        self.assertIn("href='/'", customer)
+        self.assertIn("href='/owner'", app.OWNER_HTML)
+
     def test_generic_numeric_total_and_future_schedule_questions(self):
         total = app.grounded_answer("What is the total advance paid?", app.load_bookings())
         self.assertFalse(total["escalated"])
