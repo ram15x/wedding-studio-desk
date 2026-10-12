@@ -81,6 +81,7 @@ def db() -> sqlite3.Connection:
         customer_phone TEXT NOT NULL DEFAULT '',
         expires_at TEXT NOT NULL,
         created_at TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
         UNIQUE(event_date)
     )""")
     conn.execute("""CREATE TABLE IF NOT EXISTS escalations (
@@ -96,6 +97,8 @@ def db() -> sqlite3.Connection:
     hold_columns = {row[1] for row in conn.execute("PRAGMA table_info(holds)")}
     if "customer_phone" not in hold_columns:
         conn.execute("ALTER TABLE holds ADD COLUMN customer_phone TEXT NOT NULL DEFAULT ''")
+    if "status" not in hold_columns:
+        conn.execute("ALTER TABLE holds ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
     escalation_columns = {row[1] for row in conn.execute("PRAGMA table_info(escalations)")}
     if "conversation_id" not in escalation_columns:
         conn.execute("ALTER TABLE escalations ADD COLUMN conversation_id TEXT NOT NULL DEFAULT ''")
@@ -479,9 +482,9 @@ def create_hold(event_date: str, customer_name: str, customer_phone: str = "") -
     if booked:
         return {"success": False, "error": "That date already appears in the uploaded booking sheet and cannot be held."}
     with DB_LOCK:
-        conn = db(); conn.execute("DELETE FROM holds WHERE expires_at <= ?", (now.isoformat(),))
+        conn = db(); conn.execute("DELETE FROM holds WHERE expires_at <= ? AND status = 'active'", (now.isoformat(),))
         try:
-            conn.execute("INSERT INTO holds(event_date, customer_name, customer_phone, expires_at, created_at) VALUES (?, ?, ?, ?, ?)", (event_date, customer_name, customer_phone, expires.isoformat(), now.isoformat()))
+            conn.execute("INSERT INTO holds(event_date, customer_name, customer_phone, expires_at, created_at, status) VALUES (?, ?, ?, ?, ?, 'active')", (event_date, customer_name, customer_phone, expires.isoformat(), now.isoformat()))
             conn.commit(); result = {"success": True, "event_date": event_date, "customer_name": customer_name, "expires_at": expires.isoformat()}
         except sqlite3.IntegrityError:
             conn.rollback(); result = {"success": False, "error": "That date is already held by another customer."}
@@ -508,8 +511,9 @@ OWNER_HTML = """<!doctype html><html><head><meta charset='utf-8'><meta name='vie
 body{font-family:Inter,system-ui,sans-serif;background:#f5f7fb;margin:0;color:#172033}.wrap{max-width:900px;margin:0 auto;padding:28px}.card{background:#fff;border:1px solid #e1e6ef;border-radius:16px;padding:20px;margin:16px 0}.muted{color:#68738a}.item{padding:12px 0;border-bottom:1px solid #edf0f5}input,button{font:inherit;padding:10px;border-radius:8px;border:1px solid #cad2df}button{background:#2463eb;color:#fff;border:0;font-weight:700;cursor:pointer}.reply{display:flex;gap:8px;margin-top:8px}.reply input{flex:1}.small{font-size:13px}
 </style></head><body><main class='wrap'><p><a href='/'>Customer chat</a></p><h1>Studio Desk owner</h1><div class='card'><h2>Upload booking sheet</h2><form id='uploadForm'><input id='csv' type='file' accept='.csv,text/csv' required><button>Upload</button></form><p id='uploadResult' class='muted small'></p></div><div class='card'><h2>Customer escalations</h2><div id='inbox'>Loading…</div></div><div class='card'><h2>Active holds</h2><div id='holds'>Loading…</div></div></main><script>
 const esc=s=>String(s||'').replace(/[&<>\"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[m]));
-async function load(){let inbox=await (await fetch('/api/owner/inbox')).json();document.getElementById('inbox').innerHTML=inbox.items.length?inbox.items.map(x=>'<div class="item"><b>'+esc(x.question)+'</b><div class="muted small">'+esc(x.reason)+'</div><div class="reply"><input id="reply-'+x.id+'" placeholder="Reply to customer"><button onclick="reply(\''+esc(x.conversation_id)+'\','+x.id+')">Send reply</button></div>'+(x.reply?'<div class="small">Sent: '+esc(x.reply)+'</div>':'')+'</div>').join(''):'<p class="muted">No open escalations.</p>';let holds=await (await fetch('/api/owner/holds')).json();document.getElementById('holds').innerHTML=holds.items.length?holds.items.map(x=>'<div class="item"><b>'+esc(x.event_date)+'</b> · '+esc(x.customer_name)+' · '+esc(x.customer_phone)+'<div class="muted small">expires '+esc(x.expires_at)+'</div></div>').join(''):'<p class="muted">No active holds.</p>'}
+async function load(){let inbox=await (await fetch('/api/owner/inbox')).json();document.getElementById('inbox').innerHTML=inbox.items.length?inbox.items.map(x=>'<div class="item"><b>'+esc(x.question)+'</b><div class="muted small">'+esc(x.reason)+'</div><div class="reply"><input id="reply-'+x.id+'" placeholder="Reply to customer"><button onclick="reply(\''+esc(x.conversation_id)+'\','+x.id+')">Send reply</button></div>'+(x.reply?'<div class="small">Sent: '+esc(x.reply)+'</div>':'')+'</div>').join(''):'<p class="muted">No open escalations.</p>';let holds=await (await fetch('/api/owner/holds')).json();document.getElementById('holds').innerHTML=holds.items.length?holds.items.map(x=>'<div class="item"><b>'+esc(x.event_date)+'</b> · '+esc(x.customer_name)+' · '+esc(x.customer_phone)+'<div class="muted small">expires '+esc(x.expires_at)+' · '+esc(x.status)+'</div><button onclick="holdAction('+x.id+',\'confirmed\')">Confirm</button> <button onclick="holdAction('+x.id+',\'released\')">Release</button></div>').join(''):'<p class="muted">No active holds.</p>'}
 async function reply(conversationId,id){let text=document.getElementById('reply-'+id).value.trim();if(!text)return;await fetch('/api/owner/reply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({conversation_id:conversationId,reply:text})});load()}
+async function holdAction(id,status){await fetch('/api/owner/hold-action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id,status:status})});load()}
 document.getElementById('uploadForm').addEventListener('submit',async e=>{e.preventDefault();let f=document.getElementById('csv').files[0],fd=new FormData();fd.append('file',f);let d=await (await fetch('/api/upload',{method:'POST',body:fd})).json();document.getElementById('uploadResult').textContent=d.error||('Loaded '+d.rows+' rows from '+d.filename)});load();setInterval(load,5000);
 </script></body></html>"""
 
@@ -584,7 +588,7 @@ class Handler(BaseHTTPRequestHandler):
             conn=db(); items=[dict(x) for x in conn.execute('SELECT * FROM escalations WHERE status = "open" ORDER BY id DESC')]; conn.close(); return self.send_json({'items':items})
         if path == '/api/owner/holds':
             if not require_owner(self): return
-            conn=db(); items=[dict(x) for x in conn.execute('SELECT * FROM holds WHERE expires_at > ? ORDER BY event_date', (datetime.now(timezone.utc).isoformat(),))]; conn.close(); return self.send_json({'items':items})
+            conn=db(); items=[dict(x) for x in conn.execute("SELECT * FROM holds WHERE expires_at > ? AND status = 'active' ORDER BY event_date", (datetime.now(timezone.utc).isoformat(),))]; conn.close(); return self.send_json({'items':items})
         if path == '/api/session':
             session_id, _ = browser_session(self)
             return self.send_json({'conversation_id': session_conversation(session_id)})
@@ -635,6 +639,15 @@ class Handler(BaseHTTPRequestHandler):
             now = datetime.now(timezone.utc).isoformat()
             with DB_LOCK:
                 conn = db(); cur = conn.execute('UPDATE escalations SET reply = ?, reply_created_at = ?, status = "replied" WHERE conversation_id = ? AND status = "open"', (reply, now, conversation_id)); conn.commit(); conn.close()
+            return self.send_json({'success': cur.rowcount > 0})
+        if path == '/api/owner/hold-action':
+            if not require_owner(self): return
+            hold_id = int(data.get('id', 0) or 0)
+            status = str(data.get('status', ''))
+            if status not in {'confirmed', 'released'}:
+                return self.send_json({'error': 'Status must be confirmed or released.'}, 400)
+            with DB_LOCK:
+                conn = db(); cur = conn.execute('UPDATE holds SET status = ? WHERE id = ? AND status = "active"', (status, hold_id)); conn.commit(); conn.close()
             return self.send_json({'success': cur.rowcount > 0})
         if path == '/api/hold':
             if not re.fullmatch(r'20\d{2}-\d{2}-\d{2}', str(data.get('event_date',''))) or not str(data.get('customer_name','')).strip() or not str(data.get('customer_phone','')).strip(): return self.send_json({'success':False,'error':'Enter a valid date, customer name, and phone number.'},400)

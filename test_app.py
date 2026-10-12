@@ -110,6 +110,15 @@ class AssignmentDeskTests(unittest.TestCase):
         self.assertTrue(first["success"])
         self.assertFalse(second["success"])
 
+    def test_hold_has_owner_lifecycle_status(self):
+        result = app.create_hold("2028-12-01", "First customer", "+911234567890")
+        self.assertTrue(result["success"])
+        conn = app.db()
+        row = conn.execute("SELECT status, customer_phone FROM holds WHERE event_date = ?", ("2028-12-01",)).fetchone()
+        conn.close()
+        self.assertEqual(row[0], "active")
+        self.assertEqual(row[1], "+911234567890")
+
     def test_existing_booking_cannot_be_held(self):
         result = app.create_hold("2026-11-22", "Another customer")
         self.assertFalse(result["success"])

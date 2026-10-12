@@ -78,7 +78,7 @@ Will bookings increase next month?
 
 ## Date holds
 
-Choose a date and customer name, then select **Request hold**. A free date is held for 24 hours. The same date cannot be held twice while the first hold is active. Dates already present in the CSV cannot be held.
+Choose a date, customer name, and phone, then select **Request hold**. A free date is held for 24 hours. The same date cannot be held twice while the first hold is active. Dates already present in the CSV cannot be held. The owner can confirm or release an active hold from `/owner`.
 
 ## Owner desk
 
