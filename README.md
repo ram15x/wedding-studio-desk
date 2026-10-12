@@ -20,13 +20,7 @@ The app first computes the answer deterministically from the uploaded rows. The 
 
 ## Run
 
-From the ZERO repository root:
-
-```powershell
-python assignment/app.py
-```
-
-If you use the standalone ZIP/repository, run from its extracted folder:
+] run from its extracted folder:
 
 ```powershell
 py -3 app.py
