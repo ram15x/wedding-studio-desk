@@ -171,7 +171,7 @@ class AssignmentDeskTests(unittest.TestCase):
             def __exit__(self, *args): return False
             def read(self):
                 return b'{"choices":[{"message":{"content":"Wedding is most common."}}]}'
-        with mock.patch.dict(app.os.environ, {"OPENROUTER_API_KEY": "test-only", "OPENROUTER_MODEL": "test/model"}, clear=True):
+        with mock.patch.dict(app.os.environ, {"OPENROUTER_API_KEY": "test-only", "OPENROUTER_MODEL": "test/model", "OPENROUTER_ALLOW_GROUNDED_DATA": "1"}, clear=True):
             with mock.patch("app.urllib.request.urlopen", return_value=Response()):
                 result = app.answer_with_optional_synthesis("Which event type is most common?", app.load_bookings())
         self.assertEqual(result["synthesis"], "deterministic")
@@ -183,7 +183,7 @@ class AssignmentDeskTests(unittest.TestCase):
             def __exit__(self, *args): return False
             def read(self):
                 return b'{"choices":[{"message":{"content":"The most common event type is wedding, with 7 of 12 records (58.33%)."}}]}'
-        with mock.patch.dict(app.os.environ, {"OPENROUTER_API_KEY": "test-only", "OPENROUTER_MODEL": "test/model"}, clear=True):
+        with mock.patch.dict(app.os.environ, {"OPENROUTER_API_KEY": "test-only", "OPENROUTER_MODEL": "test/model", "OPENROUTER_ALLOW_GROUNDED_DATA": "1"}, clear=True):
             with mock.patch("app.urllib.request.urlopen", return_value=Response()):
                 result = app.answer_with_optional_synthesis("Which event type is most common?", app.load_bookings())
         self.assertEqual(result["synthesis"], "openrouter")

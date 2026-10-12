@@ -15,7 +15,7 @@ No external model, API key, or database server is required for the deterministic
 
 ## Optional OpenRouter assistance
 
-For more natural questions and replies, the app can optionally call OpenRouter twice: once to classify the question into a small intent schema, and once to rewrite an already-grounded answer. Only the question text and visible column names are sent for intent classification; booking rows, credentials, and answers are not sent for that step. The model never computes booking facts. The deterministic engine reads the CSV, enforces privacy, calculates the result, and remains the fallback if the key is missing, the provider fails, or validation rejects the response.
+For more natural questions and replies, the app can optionally call OpenRouter to classify the question into a small intent schema. Only the question text and visible column names are sent for intent classification; booking rows, credentials, and answers are not sent. The model never computes booking facts. The deterministic engine reads the CSV, enforces privacy, calculates the result, and remains the fallback if the key is missing, the provider fails, or validation rejects the response.
 
 Set the key only in the local process environment; do not put it in Git or the CSV:
 
@@ -25,7 +25,13 @@ $env:OPENROUTER_MODEL = "openai/gpt-4o-mini"
 py -3 app.py
 ```
 
-The UI labels an accepted rewrite as **OpenRouter grounded rewrite**. The fallback label is **Deterministic grounded answer**. A key is not required to run the demo safely.
+The UI labels an intent-assisted response as **OpenRouter grounded rewrite** only when a separately accepted prose rewrite is enabled. The default fallback label is **Deterministic grounded answer**. A key is not required to run the demo safely.
+
+The prose rewrite path is disabled by default because it would send the verified answer (which may contain booking facts) to OpenRouter. Enable it only if that disclosure is acceptable:
+
+```powershell
+$env:OPENROUTER_ALLOW_GROUNDED_DATA = "1"
+```
 
 The intent call is constrained to `date_availability`, `package_price`, `count`, `most_common`, `personal_lookup`, or `unsupported`. Its output is validated before it can influence routing; it cannot introduce a new field or value into an answer.
 

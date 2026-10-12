@@ -189,7 +189,8 @@ def _model_synthesis(question: str, grounded: dict) -> str | None:
     """
     api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
     model = os.environ.get("OPENROUTER_MODEL", "").strip()
-    if not api_key or not model or grounded.get("escalated"):
+    allow_grounded_data = os.environ.get("OPENROUTER_ALLOW_GROUNDED_DATA", "").lower() in {"1", "true", "yes"}
+    if not api_key or not model or not allow_grounded_data or grounded.get("escalated"):
         return None
     baseline = str(grounded.get("answer", ""))
     prompt = (
