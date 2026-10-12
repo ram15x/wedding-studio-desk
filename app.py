@@ -534,10 +534,7 @@ def grounded_answer(question: str, rows: list[dict[str, str]], conversation_id: 
             upcoming = [row for row in rows if row.get(date_field, "") > today]
             preview = "; ".join(f"{row.get(date_field)} ({row.get('event_type', 'event')}, {row.get('status', 'status')})" for row in sorted(upcoming, key=lambda item: item.get(date_field, ""))[:8])
             return {"answer": f"The sheet contains {len(upcoming)} future-dated rows. Upcoming examples: {preview or 'none visible'}. This is a schedule in the uploaded file, not a demand forecast.\n\n{source_note()}", "escalated": False}
-    if any(word in q for word in ("status", "album", "package", "booking", "city", "date", "price", "payment", "balance", "field", "column")):
-        usable = ", ".join(field.replace("_", " ") for field in columns)
-        return {"answer": f"I can answer supported facts from the {len(rows)} uploaded rows. Available columns are: {usable}. Ask for a specific field, date, total, average, group comparison, or upcoming schedule.\n\n{source_note()}", "escalated": False}
-    return escalate(question, "No matching field or supported fact was found in the uploaded sheet.", conversation_id)
+    return escalate(question, "No matching supported fact was found in the uploaded booking sheet.", conversation_id)
 
 
 def escalate(question: str, reason: str, conversation_id: str = "") -> dict:

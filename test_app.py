@@ -116,6 +116,12 @@ class AssignmentDeskTests(unittest.TestCase):
         columns = {row[1] for row in connection.execute("PRAGMA table_info(escalations)")}
         connection.close()
         self.assertTrue({"conversation_id", "reply", "reply_created_at"}.issubset(columns))
+    def test_unsupported_customer_question_escalates_without_column_dump(self):
+        result = app.customer_answer("Tell me about the album workflow", app.load_bookings())
+        self.assertTrue(result["escalated"])
+        self.assertNotIn("Available columns", result["answer"])
+        self.assertIn("owner", result["answer"])
+
     def test_unsupported_cause_escalates(self):
         result = app.grounded_answer("Why are wedding packages expensive?", app.load_bookings())
         self.assertTrue(result["escalated"])
