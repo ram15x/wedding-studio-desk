@@ -269,7 +269,15 @@ def _question_date(question: str, rows: list[dict[str, str]]) -> str | None:
         return None
     day = int(match.group(1))
     candidates = sorted({row.get("event_date", "") for row in rows if row.get("event_date", "").endswith(f"-{month:02d}-{day:02d}")})
-    return candidates[0] if len(candidates) == 1 else None
+    if len(candidates) == 1:
+        return candidates[0]
+    year = re.search(r"\b(20\d{2})\b", question.lower())
+    if year:
+        try:
+            return datetime(int(year.group(1)), month, day).date().isoformat()
+        except ValueError:
+            return None
+    return None
 
 
 def build_operating_brief(rows: list[dict[str, str]]) -> dict:
@@ -312,14 +320,14 @@ def grounded_answer(question: str, rows: list[dict[str, str]]) -> dict:
     columns = list(rows[0].keys()) if rows else []
     if not q:
         return {"answer": "Ask a question about bookings, dates, packages, prices, status, or album stage.", "escalated": False}
-    if any(word in q for word in ("why", "cause", "reason", "should we", "recommend")):
+    if any(word in q for word in ("why", "cause", "reason", "should we", "recommend", "forecast", "will bookings", "bookings increase", "bookings decrease", "bookings decline")):
         return escalate(question, "The CSV contains booking records but does not establish causes or business decisions.")
-    if "what does" in q or "represent" in q or "business" in q:
+    if ("what does" in q or "represent" in q or "business" in q) and not any(term in q for term in ("cost", "price", "package")):
         labels = ", ".join(field.replace("_", " ") for field in columns)
         return {"answer": f"The uploaded sheet contains {len(rows)} records with these visible fields: {labels}. It can support descriptive counts, numeric summaries, comparisons, and date lookups where those fields are populated. It does not by itself establish business policies, causes, capacity, or forecasts.\n\n{source_note()}", "escalated": False}
     booking_match = re.search(r"\bSS-\d+\b", question, re.IGNORECASE)
     booking_id = booking_match.group(0).upper() if booking_match else None
-    personal = booking_id is not None and any(term in q for term in ("balance", "album", "status", "booking", "package", "event")) or any(term in q for term in ("my balance", "my album", "my booking", "my status", "my package", "my event", "where is my"))
+    personal = (booking_id is not None and any(term in q for term in ("balance", "album", "status", "booking", "package", "event", "city", "location", "customer", "name", "date", "when", "price", "cost"))) or any(term in q for term in ("my balance", "my album", "my booking", "my status", "my package", "my event", "my city", "my location", "where is my", "what city am i", "what is my"))
     if personal:
         if not booking_id:
             return {"answer": "Please share your booking ID (for example, SS-2043) so I can look up your booking securely.", "escalated": False}
@@ -330,17 +338,28 @@ def grounded_answer(question: str, rows: list[dict[str, str]]) -> dict:
             return {"answer": f"Booking {booking_id} has a balance of {display_number('balance_due', float(row.get('balance_due', 0)))} due.", "escalated": False}
         if "album" in q:
             return {"answer": f"Booking {booking_id}'s album is currently at: {row.get('album_stage', 'not available').replace('_', ' ')}.", "escalated": False}
+        if "city" in q or "location" in q:
+            return {"answer": f"Booking {booking_id} is listed in {row.get('city', 'an unknown city')}.", "escalated": False}
+        if "customer" in q or "name" in q:
+            return {"answer": f"The customer name on booking {booking_id} is {row.get('customer_name', 'not available')}.", "escalated": False}
+        if "package" in q or "price" in q or "cost" in q:
+            package = row.get('package', 'not available')
+            price = display_number('package_price', float(row.get('package_price', 0))) if row.get('package_price') else 'not available'
+            return {"answer": f"Booking {booking_id} is for the {package} package, listed at {price}.", "escalated": False}
+        if "date" in q or "when" in q:
+            return {"answer": f"Booking {booking_id} is scheduled for {row.get('event_date', 'an unknown date')}.", "escalated": False}
         if "status" in q or "booking" in q:
             return {"answer": f"Booking {booking_id} is {row.get('status', 'not available')}. It is scheduled for {row.get('event_date', 'an unknown date')}.", "escalated": False}
         return {"answer": f"Booking {booking_id} is for a {row.get('event_type', 'recorded event')} on {row.get('event_date', 'an unknown date')}.", "escalated": False}
-    if any(term in q for term in ("how much is", "price of", "package price")):
+    if not any(term in q for term in ("compare", "versus", " vs ")) and any(term in q for term in ("how much is", "price of", "package price", " cost", "cost of")):
         package = next((row.get("package") for row in rows if row.get("package") and row.get("package", "").lower() in q), None)
         if package:
             values = {row.get("package_price") for row in rows if row.get("package", "").lower() == package.lower() and row.get("package_price")}
             if len(values) == 1:
                 return {"answer": f"The {package} package is listed at {display_number('package_price', float(next(iter(values))))} in the current booking sheet.", "escalated": False}
             if values:
-                return {"answer": f"The {package} package has more than one recorded price in the current booking sheet. Please contact the studio owner for the price applicable to your booking.", "escalated": False}
+                ordered = sorted(float(value) for value in values)
+                return {"answer": f"The {package} package has recorded prices from {display_number('package_price', ordered[0])} to {display_number('package_price', ordered[-1])}. Please confirm the price for your booking with the studio owner.", "escalated": False}
         field = _field_match(q, columns, ("package_price",))
         if field:
             values = _numeric_values(rows, field)
@@ -402,13 +421,13 @@ def grounded_answer(question: str, rows: list[dict[str, str]]) -> dict:
     date_field = _date_field(columns)
     date_target = _question_date(question, rows)
     date_match = re.search(r"\b20\d{2}-\d{2}-\d{2}\b", q)
-    if date_match or date_target or "available" in q or "booked" in q:
+    if date_match or date_target or "available" in q or "booked" in q or "hold" in q or "can i book" in q or "can we book" in q:
         target = date_target or (date_match.group(0) if date_match else None)
         matches = [row for row in rows if target and date_field and row.get(date_field) == target]
         if target and matches:
             row = matches[0]
             status = row.get("status", "recorded")
-            availability = "not available for a new hold" if status.lower() in {"confirmed", "completed", "delivered", "delivered_late"} else "already represented in the sheet and needs owner confirmation before a new hold"
+            availability = "not available for a new hold"
             details = ", ".join(f"{field.replace('_', ' ')}: {row.get(field, '')}" for field in ("event_type", "package", "city", "status", "album_stage") if row.get(field))
             return {"answer": f"{target} is {availability}. The uploaded sheet has one booking row ({details}). This is based only on the current file; confirm any change with the studio owner.\n\n{source_note()}", "escalated": False}
         if target:

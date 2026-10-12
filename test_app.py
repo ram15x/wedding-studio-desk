@@ -58,6 +58,41 @@ class AssignmentDeskTests(unittest.TestCase):
     def test_customer_chat_does_not_expose_owner_aggregates(self):
         result = app.customer_answer("What is the total balance due?", app.load_bookings())
         self.assertIn("specific booking", result["answer"])
+
+    def test_customer_questions_cover_twenty_realistic_phrasings(self):
+        rows = app.load_bookings()
+        cases = [
+            ("is 14 december booked", "not available"),
+            ("is 2026-11-22 available", "not available"),
+            ("can I book 20 December 2026", "appears free"),
+            ("hold 20 December 2026", "appears free"),
+            ("how much is full package", "185,000"),
+            ("what does wedding day cost", "120,000"),
+            ("what is my balance for SS-2043", "80,000"),
+            ("where is my album SS-2043", "not started"),
+            ("what is the status of SS-2043", "tentative"),
+            ("what city is SS-2043 in", "Delhi"),
+            ("what package do I have SS-2043", "Wedding Day"),
+            ("what date is SS-2048", "2027-01-17"),
+            ("what is the event for SS-2031", "wedding"),
+            ("what is the customer name for SS-2043", "Ananya Gupta"),
+            ("which city has the most bookings", "Please share your booking ID"),
+            ("how many bookings are confirmed", "Please share your booking ID"),
+            ("what is my balance", "Please share your booking ID"),
+            ("will bookings increase next month", "owner for review"),
+            ("can I get a refund", "owner for review"),
+            ("what services do you offer", "owner for review"),
+        ]
+        for question, expected in cases:
+            with self.subTest(question=question):
+                result = app.customer_answer(question, rows)
+                self.assertIn(expected.lower(), result["answer"].lower())
+
+    def test_personal_booking_fields_are_scoped_to_booking_id(self):
+        rows = app.load_bookings()
+        self.assertIn("Delhi", app.customer_answer("what city is SS-2043 in", rows)["answer"])
+        self.assertIn("Wedding Day", app.customer_answer("what package do I have SS-2043", rows)["answer"])
+        self.assertIn("booking ID", app.customer_answer("what city am I in", rows)["answer"])
     def test_unsupported_cause_escalates(self):
         result = app.grounded_answer("Why are wedding packages expensive?", app.load_bookings())
         self.assertTrue(result["escalated"])
