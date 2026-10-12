@@ -21,6 +21,14 @@ cd wedding-studio-desk
 py -3 app.py
 ```
 
+For a hosted process, bind the same app to the platform-provided host and port:
+
+```powershell
+$env:ASSIGNMENT_HOST = "0.0.0.0"
+$env:ASSIGNMENT_PORT = "10000"
+py -3 app.py
+```
+
 Open this address in a browser:
 
 ```text
