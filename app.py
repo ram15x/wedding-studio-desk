@@ -31,6 +31,8 @@ SESSION_LOCK = threading.Lock()
 SESSIONS: dict[str, set[str]] = {}
 OPENROUTER_URL = os.environ.get("OPENROUTER_URL", "https://openrouter.ai/api/v1/chat/completions")
 OPENROUTER_TIMEOUT = max(3, min(int(os.environ.get("OPENROUTER_TIMEOUT_SECONDS", "20")), 60))
+INTENT_KINDS = {"date_availability", "package_price", "count", "most_common", "personal_lookup", "unsupported"}
+INTENT_FIELDS = {"event_type", "package", "city", "status", "album_stage", "package_price", "advance_paid", "balance_due", ""}
 
 
 def load_bookings() -> list[dict[str, str]]:
@@ -125,6 +127,58 @@ def source_note() -> str:
     return f"Source: {SOURCE_DISPLAY_NAME}. This answer uses only the uploaded booking rows."
 
 
+def _model_intent(question: str, columns: list[str]) -> dict | None:
+    """Classify a question into a small validated shape; never compute answers."""
+    api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    model = os.environ.get("OPENROUTER_MODEL", "").strip()
+    if not api_key or not model:
+        return None
+    schema = {"kind": "date_availability|package_price|count|most_common|personal_lookup|unsupported", "field": "column or empty", "value": "category/status/package or empty", "date": "YYYY-MM-DD or empty", "booking_id": "SS-#### or empty"}
+    prompt = (
+        "Classify this customer question for a booking-sheet assistant. Return JSON only with exactly "
+        "kind, field, value, date, booking_id. Do not answer, infer facts, or invent values. "
+        "Use unsupported for causes, recommendations, forecasts, or policy questions.\n"
+        f"VISIBLE COLUMNS: {', '.join(columns)}\nOUTPUT SHAPE: {json.dumps(schema)}\nQUESTION: {question}"
+    )
+    payload = json.dumps({"model": model, "temperature": 0, "max_tokens": 160, "messages": [{"role": "system", "content": "You classify only; output strict JSON."}, {"role": "user", "content": prompt}]}).encode("utf-8")
+    request = urllib.request.Request(OPENROUTER_URL, data=payload, headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "HTTP-Referer": "http://localhost", "X-Title": "Wedding Studio Desk"}, method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=OPENROUTER_TIMEOUT) as response:
+            body = json.loads(response.read().decode("utf-8"))
+        content = body["choices"][0]["message"]["content"]
+        if not isinstance(content, str):
+            return None
+        match = re.search(r"\{.*\}", content, re.DOTALL)
+        parsed = json.loads(match.group(0) if match else content)
+        if not isinstance(parsed, dict) or parsed.get("kind") not in INTENT_KINDS:
+            return None
+        result = {key: str(parsed.get(key, "") or "").strip() for key in ("kind", "field", "value", "date", "booking_id")}
+        if result["field"] and result["field"] not in columns and result["field"] not in INTENT_FIELDS:
+            return None
+        if result["date"] and not re.fullmatch(r"20\d{2}-\d{2}-\d{2}", result["date"]):
+            return None
+        if result["booking_id"] and not re.fullmatch(r"SS-\d+", result["booking_id"], re.IGNORECASE):
+            return None
+        return result
+    except (urllib.error.URLError, OSError, TimeoutError, ValueError, KeyError, IndexError, TypeError, json.JSONDecodeError):
+        return None
+
+
+def _intent_query(intent: dict) -> str | None:
+    kind, field = intent.get("kind"), intent.get("field", "")
+    if kind == "date_availability" and intent.get("date"):
+        return f"is {intent['date']} available"
+    if kind == "package_price" and intent.get("value"):
+        return f"how much is {intent['value']}"
+    if kind == "most_common" and field:
+        return f"which {field.replace('_', ' ')} has the most bookings"
+    if kind == "count" and field and intent.get("value"):
+        return f"how many bookings are {intent['value']}"
+    if kind == "personal_lookup" and intent.get("booking_id"):
+        return f"{field or 'status'} for {intent['booking_id']}"
+    return None
+
+
 def _model_synthesis(question: str, grounded: dict) -> str | None:
     """Use OpenRouter as a grounded communication/decision assistant.
 
@@ -189,7 +243,14 @@ def _model_synthesis(question: str, grounded: dict) -> str | None:
 
 
 def answer_with_optional_synthesis(question: str, rows: list[dict[str, str]], conversation_id: str = "") -> dict:
-    grounded = grounded_answer(question, rows, conversation_id)
+    # Intent classification can improve natural phrasing, but the deterministic
+    # engine still owns all row access, calculations, privacy checks, and facts.
+    columns = list(rows[0].keys()) if rows else []
+    intent = _model_intent(question, columns)
+    routed_question = _intent_query(intent) if intent else None
+    grounded = grounded_answer(routed_question or question, rows, conversation_id)
+    if routed_question:
+        grounded = {**grounded, "intent_assisted": True}
     synthesized = _model_synthesis(question, grounded)
     if synthesized:
         grounded = {**grounded, "answer": synthesized, "synthesis": "openrouter"}

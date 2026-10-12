@@ -189,6 +189,30 @@ class AssignmentDeskTests(unittest.TestCase):
         self.assertEqual(result["synthesis"], "openrouter")
         self.assertIn("Source: studio_bookings.csv", result["answer"])
 
+    def test_model_intent_is_strict_and_receives_schema_not_rows(self):
+        captured = {}
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
+            def read(self):
+                return b'{"choices":[{"message":{"content":"{\\"kind\\":\\"count\\",\\"field\\":\\"status\\",\\"value\\":\\"confirmed\\",\\"date\\":\\"\\",\\"booking_id\\":\\"\\"}"}}]}'
+        def fake_urlopen(request, timeout):
+            captured["body"] = request.data.decode("utf-8")
+            return Response()
+        with mock.patch.dict(app.os.environ, {"OPENROUTER_API_KEY": "test-only", "OPENROUTER_MODEL": "test/model"}, clear=True):
+            with mock.patch("app.urllib.request.urlopen", side_effect=fake_urlopen):
+                result = app._model_intent("How many bookings are confirmed?", ["booking_id", "status", "customer_name"])
+        self.assertEqual(result["kind"], "count")
+        self.assertIn("How many bookings are confirmed?", captured["body"])
+        self.assertNotIn("Ananya Gupta", captured["body"])
+
+    def test_intent_assisted_routing_still_uses_deterministic_rows(self):
+        intent = {"kind": "count", "field": "status", "value": "confirmed", "date": "", "booking_id": ""}
+        with mock.patch("app._model_intent", return_value=intent), mock.patch("app._model_synthesis", return_value=None):
+            result = app.answer_with_optional_synthesis("Could you tell me how many are locked in?", app.load_bookings())
+        self.assertTrue(result["intent_assisted"])
+        self.assertIn("6 bookings", result["answer"])
+
 
 if __name__ == "__main__":
     unittest.main()
