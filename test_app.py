@@ -188,6 +188,15 @@ class AssignmentDeskTests(unittest.TestCase):
         self.assertIn("href='/'", customer)
         self.assertIn("href='/owner'", app.OWNER_HTML)
 
+    def test_package_catalogue_answers_customer_availability(self):
+        rows = app.load_bookings()
+        listed = app.customer_answer("What packages are available?", rows)
+        self.assertFalse(listed["escalated"])
+        self.assertIn("Full Package", listed["answer"])
+        reception = app.customer_answer("Do you have a reception package?", rows)
+        self.assertFalse(reception["escalated"])
+        self.assertIn("Reception Only", reception["answer"])
+
     def test_package_price_reply_is_natural(self):
         result = app.grounded_answer("How much is the Full Package?", app.load_bookings())
         self.assertIn("Full Package has recorded prices", result["answer"])

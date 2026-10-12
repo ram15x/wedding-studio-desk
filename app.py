@@ -447,6 +447,14 @@ def grounded_answer(question: str, rows: list[dict[str, str]], conversation_id: 
         if "status" in q or "booking" in q:
             return {"answer": f"Booking {booking_id} is {row.get('status', 'not available')}. It is scheduled for {row.get('event_date', 'an unknown date')}.", "escalated": False}
         return {"answer": f"Booking {booking_id} is for a {row.get('event_type', 'recorded event')} on {row.get('event_date', 'an unknown date')}.", "escalated": False}
+    if booking_id is None and "package" in q and any(term in q for term in ("offer", "have", "available", "listed", "options", "provide")):
+        packages = sorted({row.get("package", "").strip() for row in rows if row.get("package", "").strip()})
+        requested = next((package for package in packages if package.lower() in q or package.lower().replace(" + ", " ").replace("-", " ") in q), None)
+        if requested:
+            return {"answer": f"Yes, {requested} appears in the current booking sheet. Ask me for its recorded price if you would like to check it.", "escalated": False}
+        if packages:
+            return {"answer": "The current booking sheet lists these packages: " + ", ".join(packages) + ". Ask me about the price of any one.", "escalated": False}
+
     if not any(term in q for term in ("compare", "versus", " vs ")) and any(term in q for term in ("how much is", "price of", "package price", " cost", "cost of")):
         package = next((row.get("package") for row in rows if row.get("package") and row.get("package", "").lower() in q), None)
         if package:
