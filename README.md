@@ -34,7 +34,7 @@ $env:OPENROUTER_MODELS = "openai/gpt-4o-mini,google/gemini-2.0-flash"
 
 The app tries each configured key/model pair after provider failures such as rate limits, then returns to the deterministic engine. This improves availability but does not bypass provider quotas or guarantee free usage.
 
-The UI labels an intent-assisted response as **OpenRouter grounded rewrite** only when a separately accepted prose rewrite is enabled. The default fallback label is **Deterministic grounded answer**. A key is not required to run the demo safely.
+The customer UI shows only the conversational answer. OpenRouter is optional: it can classify natural language into a small intent shape, while the local deterministic engine remains authoritative for booking facts and privacy.
 
 The prose rewrite path is disabled by default because it would send the verified answer (which may contain booking facts) to OpenRouter. Enable it only if that disclosure is acceptable:
 
@@ -92,6 +92,16 @@ Why did bookings decline?
 Which marketing campaign should we run?
 Will bookings increase next month?
 ```
+
+## Demo flow
+
+Use the customer page like a WhatsApp conversation:
+
+1. Ask `Is 20 December 2026 available?`
+2. If it is free, enter a name and phone number and choose **Request hold**.
+3. Ask `What is my balance for SS-2043?` to retrieve a booking-specific value.
+4. Ask an unsupported question such as `Why did bookings decline?`; it is escalated to the owner.
+5. Open **Owner desk**, reply to the escalation, then return to **Customer chat** to see the owner reply in the same conversation.
 
 ## Date holds
 
