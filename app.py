@@ -123,10 +123,10 @@ def source_note() -> str:
 
 
 def _model_synthesis(question: str, grounded: dict) -> str | None:
-    """Optionally humanize a verified answer; never becomes the source of facts.
+    """Use OpenRouter as a grounded communication/decision assistant.
 
     The provider is deliberately opt-in. A response is accepted only when it
-    preserves every numeric/date token from the deterministic answer. Any
+    preserves every factual anchor from the deterministic answer. Any
     missing configuration, network error, malformed response, or changed fact
     falls back to the deterministic answer.
     """
@@ -136,11 +136,15 @@ def _model_synthesis(question: str, grounded: dict) -> str | None:
         return None
     baseline = str(grounded.get("answer", ""))
     prompt = (
-        "Rewrite the verified answer for a business owner in plain language. "
-        "Use only the VERIFIED ANSWER below. Do not add facts, causes, forecasts, "
-        "recommendations, dates, amounts, or names. Keep every number and date "
-        "exactly. If it is descriptive, say it is descriptive. Return only the "
-        "answer text, with short headings if useful.\n\n"
+        "Act as the customer-facing assistant for a wedding studio. "
+        "Turn the VERIFIED ANSWER into a warm, clear WhatsApp-style reply. "
+        "You may explain what the verified result means and give a practical next step "
+        "only when that next step follows directly from the verified answer. "
+        "Never invent availability, causes, policies, forecasts, customer details, "
+        "prices, dates, or decisions. Never reveal another customer's information. "
+        "If the verified answer asks for owner review, preserve that escalation. "
+        "Keep every factual anchor exactly, including booking IDs, dates, numbers, and amounts. "
+        "Return only the reply text.\n\n"
         f"QUESTION:\n{question}\n\nVERIFIED ANSWER:\n{baseline}"
     )
     payload = json.dumps({
@@ -170,7 +174,8 @@ def _model_synthesis(question: str, grounded: dict) -> str | None:
         if not isinstance(content, str) or not content.strip():
             return None
         # Preserve factual anchors. This is intentionally conservative.
-        for token in re.findall(r"(?:\d+(?:[.,]\d+)*%?|20\d{2}-\d{2}-\d{2})", baseline):
+        anchors = re.findall(r"\bSS-\d+\b|20\d{2}-\d{2}-\d{2}|₹?\d+(?:[.,]\d+)*%?", baseline)
+        for token in anchors:
             if token not in content:
                 return None
         if source_note() not in content:

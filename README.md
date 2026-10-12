@@ -13,6 +13,20 @@ It loads the supplied booking CSV and provides:
 
 No external model, API key, or database server is required.
 
+## Optional OpenRouter assistance
+
+For more natural replies, the app can send the already-grounded deterministic answer to OpenRouter for rewriting. The model is an editor and explanation assistant; it is not allowed to supply booking facts. If the key is missing, the provider fails, or the response drops a verified fact, the app automatically uses the deterministic answer.
+
+Set the key only in the local process environment; do not put it in Git or the CSV:
+
+```powershell
+$env:OPENROUTER_API_KEY = Get-Clipboard
+$env:OPENROUTER_MODEL = "openai/gpt-4o-mini"
+py -3 app.py
+```
+
+The UI labels an accepted rewrite as **OpenRouter grounded rewrite**. The fallback label is **Deterministic grounded answer**. A key is not required to run the demo safely.
+
 ## Pull and run
 
 ```powershell
