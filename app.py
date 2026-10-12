@@ -283,7 +283,7 @@ def grounded_answer(question: str, rows: list[dict[str, str]]) -> dict:
     if "what does" in q or "represent" in q or "business" in q:
         labels = ", ".join(field.replace("_", " ") for field in columns)
         return {"answer": f"The uploaded sheet contains {len(rows)} records with these visible fields: {labels}. It can support descriptive counts, numeric summaries, comparisons, and date lookups where those fields are populated. It does not by itself establish business policies, causes, capacity, or forecasts.\n\n{source_note()}", "escalated": False}
-    if "most common" in q or "largest" in q or "top" in q:
+    if any(phrase in q for phrase in ("most common", "most bookings", "most records", "highest number", "largest", "top")):
         field = _field_match(q, columns, ("event_type", "package", "city", "status", "album_stage"))
         if not field:
             return escalate(question, "The question does not identify a categorical field to group.")
@@ -292,6 +292,16 @@ def grounded_answer(question: str, rows: list[dict[str, str]]) -> dict:
             return escalate(question, f"The uploaded sheet has no usable values for {field}.")
         value, count = max(counts.items(), key=lambda item: item[1])
         return {"answer": f"The most common {field.replace('_', ' ')} is '{value}', with {count} of {len(rows)} records ({count / len(rows):.2%}).\n\n{source_note()}", "escalated": False}
+    if re.search(r"\bhow many\b", q):
+        categorical = ("event_type", "package", "city", "status", "album_stage")
+        for field in categorical:
+            if field not in columns:
+                continue
+            counts = Counter(row.get(field, "") for row in rows if row.get(field, ""))
+            for value, count in counts.items():
+                if value.lower() in q:
+                    label = field.replace("_", " ")
+                    return {"answer": f"There are {count} bookings with {label} '{value}' ({count / len(rows):.2%} of {len(rows)} records).\n\n{source_note()}", "escalated": False}
     if "average" in q or "avg" in q or "mean" in q:
         field = _field_match(q, columns, ("package_price", "advance_paid", "balance_due"))
         if not field:
@@ -424,4 +434,3 @@ if __name__ == '__main__':
     print(f'Studio Desk using {CSV_PATH.name} ({len(load_bookings())} rows)')
     print(f'Open http://127.0.0.1:{PORT}')
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
-

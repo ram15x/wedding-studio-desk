@@ -24,6 +24,17 @@ class AssignmentDeskTests(unittest.TestCase):
         self.assertIn("wedding", result["answer"])
         self.assertIn("7 of 12", result["answer"])
 
+    def test_city_most_bookings_uses_grouped_counts(self):
+        result = app.grounded_answer("Which city has the most bookings?", app.load_bookings())
+        self.assertFalse(result["escalated"])
+        self.assertIn("Delhi", result["answer"])
+        self.assertIn("7 of 12", result["answer"])
+
+    def test_confirmed_booking_count_uses_status_values(self):
+        result = app.grounded_answer("How many bookings are confirmed?", app.load_bookings())
+        self.assertFalse(result["escalated"])
+        self.assertIn("6 bookings", result["answer"])
+        self.assertIn("status", result["answer"])
     def test_unsupported_cause_escalates(self):
         result = app.grounded_answer("Why are wedding packages expensive?", app.load_bookings())
         self.assertTrue(result["escalated"])
