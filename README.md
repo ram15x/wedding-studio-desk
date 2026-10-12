@@ -99,14 +99,14 @@ Choose a date, customer name, and phone, then select **Request hold**. A free da
 
 ## Owner desk
 
-The customer page keeps owner tools hidden. Set a local owner password before starting the app:
+The customer page keeps owner tools hidden. When the app is opened locally on `127.0.0.1`, the owner desk opens without a browser username/password prompt for this assignment demo. Non-local requests still require Basic Auth using:
 
 ```powershell
-$env:OWNER_PASSWORD = "choose-a-local-demo-password"
+$env:OWNER_PASSWORD = "choose-a-local-owner-password"
 py -3 app.py
 ```
 
-Open `http://127.0.0.1:8787/owner` and sign in with username `owner`. The owner desk can upload a replacement CSV, review escalations, see active holds, and reply to an escalated customer conversation. Replies are returned to the same browser conversation; the customer page does not expose the owner APIs without authentication.
+Open `http://127.0.0.1:8787/owner` directly. The owner desk can upload a replacement CSV, review escalations, see active holds, and reply to an escalated customer conversation. Do not expose this demo server publicly without adding real authentication; localhost bypass is intentional for the assignment UI.
 
 ## Owner dashboard
 

@@ -599,6 +599,11 @@ def owner_authorized(handler: BaseHTTPRequestHandler) -> bool:
 
 
 def require_owner(handler: BaseHTTPRequestHandler) -> bool:
+    # Local assignment users should not get a browser Basic Auth prompt. Keep
+    # the protection for non-loopback callers so a hosted/public deployment is
+    # not silently exposed.
+    if handler.client_address and handler.client_address[0] in {"127.0.0.1", "::1", "localhost"}:
+        return True
     if owner_authorized(handler):
         return True
     handler.send_response(401)
