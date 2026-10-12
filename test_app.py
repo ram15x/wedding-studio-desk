@@ -35,6 +35,29 @@ class AssignmentDeskTests(unittest.TestCase):
         self.assertFalse(result["escalated"])
         self.assertIn("6 bookings", result["answer"])
         self.assertIn("status", result["answer"])
+
+    def test_customer_language_examples_are_routed_without_leaking_other_rows(self):
+        rows = app.load_bookings()
+        cases = [
+            ("is 14 december booked", "not available"),
+            ("how much is full package", "185,000"),
+            ("my balance for SS-2043", "80,000"),
+            ("where is my album SS-2043", "not started"),
+            ("what is the status of SS-2043", "tentative"),
+            ("which city has the most bookings", "Delhi"),
+            ("how many bookings are confirmed", "6 bookings"),
+        ]
+        for question, expected in cases:
+            with self.subTest(question=question):
+                result = app.grounded_answer(question, rows)
+                self.assertFalse(result["escalated"])
+                self.assertIn(expected, result["answer"])
+        personal = app.grounded_answer("what is my balance?", rows)
+        self.assertIn("booking ID", personal["answer"])
+
+    def test_customer_chat_does_not_expose_owner_aggregates(self):
+        result = app.customer_answer("What is the total balance due?", app.load_bookings())
+        self.assertIn("specific booking", result["answer"])
     def test_unsupported_cause_escalates(self):
         result = app.grounded_answer("Why are wedding packages expensive?", app.load_bookings())
         self.assertTrue(result["escalated"])

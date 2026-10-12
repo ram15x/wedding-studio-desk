@@ -74,6 +74,7 @@ def db() -> sqlite3.Connection:
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         event_date TEXT NOT NULL,
         customer_name TEXT NOT NULL,
+        customer_phone TEXT NOT NULL DEFAULT '',
         expires_at TEXT NOT NULL,
         created_at TEXT NOT NULL,
         UNIQUE(event_date)
@@ -85,6 +86,9 @@ def db() -> sqlite3.Connection:
         created_at TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'open'
     )""")
+    hold_columns = {row[1] for row in conn.execute("PRAGMA table_info(holds)")}
+    if "customer_phone" not in hold_columns:
+        conn.execute("ALTER TABLE holds ADD COLUMN customer_phone TEXT NOT NULL DEFAULT ''")
     conn.commit()
     return conn
 
@@ -172,6 +176,14 @@ def answer_with_optional_synthesis(question: str, rows: list[dict[str, str]]) ->
     return grounded
 
 
+def customer_answer(question: str, rows: list[dict[str, str]]) -> dict:
+    """Return a customer-safe answer; aggregate owner analytics stay private."""
+    lowered = question.lower()
+    if not re.search(r"\bSS-\d+\b", question, re.IGNORECASE) and any(term in lowered for term in ("average", "most common", "most bookings", "total balance", "total advance", "how many bookings", "which city has")):
+        return {"answer": "I can help with a specific booking, date, package, or availability question. Please share your booking ID for personal details.", "escalated": False, "synthesis": "deterministic"}
+    return answer_with_optional_synthesis(question, rows)
+
+
 def dataset_dashboard(rows: list[dict[str, str]]) -> dict:
     """Return deterministic, source-grounded metrics for the dashboard/report."""
     columns = list(rows[0].keys()) if rows else []
@@ -238,6 +250,28 @@ def _date_field(columns: list[str]) -> str | None:
     return next((field for field in columns if "date" in field.lower()), None)
 
 
+_MONTHS = {name.lower(): index for index, name in enumerate(
+    ("january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"), 1
+)}
+_MONTHS.update({name[:3]: index for name, index in list(_MONTHS.items()) if len(name) > 3})
+
+
+def _question_date(question: str, rows: list[dict[str, str]]) -> str | None:
+    explicit = re.search(r"\b20\d{2}-\d{1,2}-\d{1,2}\b", question.lower())
+    if explicit:
+        parts = explicit.group(0).split("-")
+        return f"{int(parts[0]):04d}-{int(parts[1]):02d}-{int(parts[2]):02d}"
+    match = re.search(r"\b(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]+)\b", question.lower())
+    if not match:
+        return None
+    month = _MONTHS.get(match.group(2))
+    if not month:
+        return None
+    day = int(match.group(1))
+    candidates = sorted({row.get("event_date", "") for row in rows if row.get("event_date", "").endswith(f"-{month:02d}-{day:02d}")})
+    return candidates[0] if len(candidates) == 1 else None
+
+
 def build_operating_brief(rows: list[dict[str, str]]) -> dict:
     profile = dataset_dashboard(rows)
     grouped, numeric = profile["grouped"], profile["numeric"]
@@ -283,6 +317,35 @@ def grounded_answer(question: str, rows: list[dict[str, str]]) -> dict:
     if "what does" in q or "represent" in q or "business" in q:
         labels = ", ".join(field.replace("_", " ") for field in columns)
         return {"answer": f"The uploaded sheet contains {len(rows)} records with these visible fields: {labels}. It can support descriptive counts, numeric summaries, comparisons, and date lookups where those fields are populated. It does not by itself establish business policies, causes, capacity, or forecasts.\n\n{source_note()}", "escalated": False}
+    booking_match = re.search(r"\bSS-\d+\b", question, re.IGNORECASE)
+    booking_id = booking_match.group(0).upper() if booking_match else None
+    personal = booking_id is not None and any(term in q for term in ("balance", "album", "status", "booking", "package", "event")) or any(term in q for term in ("my balance", "my album", "my booking", "my status", "my package", "my event", "where is my"))
+    if personal:
+        if not booking_id:
+            return {"answer": "Please share your booking ID (for example, SS-2043) so I can look up your booking securely.", "escalated": False}
+        row = next((item for item in rows if item.get("booking_id", "").upper() == booking_id), None)
+        if not row:
+            return {"answer": f"I could not find booking {booking_id} in the current booking sheet. Please check the ID or contact the studio owner.", "escalated": False}
+        if "balance" in q or "amount due" in q:
+            return {"answer": f"Booking {booking_id} has a balance of {display_number('balance_due', float(row.get('balance_due', 0)))} due.", "escalated": False}
+        if "album" in q:
+            return {"answer": f"Booking {booking_id}'s album is currently at: {row.get('album_stage', 'not available').replace('_', ' ')}.", "escalated": False}
+        if "status" in q or "booking" in q:
+            return {"answer": f"Booking {booking_id} is {row.get('status', 'not available')}. It is scheduled for {row.get('event_date', 'an unknown date')}.", "escalated": False}
+        return {"answer": f"Booking {booking_id} is for a {row.get('event_type', 'recorded event')} on {row.get('event_date', 'an unknown date')}.", "escalated": False}
+    if any(term in q for term in ("how much is", "price of", "package price")):
+        package = next((row.get("package") for row in rows if row.get("package") and row.get("package", "").lower() in q), None)
+        if package:
+            values = {row.get("package_price") for row in rows if row.get("package", "").lower() == package.lower() and row.get("package_price")}
+            if len(values) == 1:
+                return {"answer": f"The {package} package is listed at {display_number('package_price', float(next(iter(values))))} in the current booking sheet.", "escalated": False}
+            if values:
+                return {"answer": f"The {package} package has more than one recorded price in the current booking sheet. Please contact the studio owner for the price applicable to your booking.", "escalated": False}
+        field = _field_match(q, columns, ("package_price",))
+        if field:
+            values = _numeric_values(rows, field)
+            if values:
+                return {"answer": f"The recorded {field.replace('_', ' ')} values range from {display_number(field, min(values))} to {display_number(field, max(values))}. Please specify the package.", "escalated": False}
     if any(phrase in q for phrase in ("most common", "most bookings", "most records", "highest number", "largest", "top")):
         field = _field_match(q, columns, ("event_type", "package", "city", "status", "album_stage"))
         if not field:
@@ -337,9 +400,10 @@ def grounded_answer(question: str, rows: list[dict[str, str]]) -> dict:
                 detail = "; ".join(f"{key}: {display_number(numeric_field, sum(values) / len(values))} average ({len(values)} records)" for key, values in sorted(groups.items()))
                 return {"answer": f"For {numeric_field.replace('_', ' ')} by {group_field.replace('_', ' ')}, the visible averages are: {detail}. This describes the uploaded rows and does not establish a cause.\n\n{source_note()}", "escalated": False}
     date_field = _date_field(columns)
+    date_target = _question_date(question, rows)
     date_match = re.search(r"\b20\d{2}-\d{2}-\d{2}\b", q)
-    if date_match or "available" in q:
-        target = date_match.group(0) if date_match else None
+    if date_match or date_target or "available" in q or "booked" in q:
+        target = date_target or (date_match.group(0) if date_match else None)
         matches = [row for row in rows if target and date_field and row.get(date_field) == target]
         if target and matches:
             row = matches[0]
@@ -348,7 +412,7 @@ def grounded_answer(question: str, rows: list[dict[str, str]]) -> dict:
             details = ", ".join(f"{field.replace('_', ' ')}: {row.get(field, '')}" for field in ("event_type", "package", "city", "status", "album_stage") if row.get(field))
             return {"answer": f"{target} is {availability}. The uploaded sheet has one booking row ({details}). This is based only on the current file; confirm any change with the studio owner.\n\n{source_note()}", "escalated": False}
         if target:
-            return {"answer": f"No booking row for {target} appears in the uploaded sheet. This is not a guarantee that the date is available outside this file.\n\n{source_note()}", "escalated": False}
+            return {"answer": f"I do not see a booking on {target} in the current sheet. It appears free here. If you want it, enter your name and phone below and request a 24-hour hold.", "escalated": False, "hold_offer": target}
     if "future" in q or "upcoming" in q or "schedule" in q:
         if date_field:
             today = datetime.now(timezone.utc).date().isoformat()
@@ -370,7 +434,7 @@ def escalate(question: str, reason: str) -> dict:
     return {"answer": "I don't have enough evidence in the booking sheet to answer that safely. I sent this question to the studio owner for review.", "reason": reason, "escalated": True}
 
 
-def create_hold(event_date: str, customer_name: str) -> dict:
+def create_hold(event_date: str, customer_name: str, customer_phone: str = "") -> dict:
     now = datetime.now(timezone.utc)
     expires = now + timedelta(hours=24)
     booked = next((row for row in load_bookings() if row.get("event_date") == event_date), None)
@@ -379,7 +443,7 @@ def create_hold(event_date: str, customer_name: str) -> dict:
     with DB_LOCK:
         conn = db(); conn.execute("DELETE FROM holds WHERE expires_at <= ?", (now.isoformat(),))
         try:
-            conn.execute("INSERT INTO holds(event_date, customer_name, expires_at, created_at) VALUES (?, ?, ?, ?)", (event_date, customer_name, expires.isoformat(), now.isoformat()))
+            conn.execute("INSERT INTO holds(event_date, customer_name, customer_phone, expires_at, created_at) VALUES (?, ?, ?, ?, ?)", (event_date, customer_name, customer_phone, expires.isoformat(), now.isoformat()))
             conn.commit(); result = {"success": True, "event_date": event_date, "customer_name": customer_name, "expires_at": expires.isoformat()}
         except sqlite3.IntegrityError:
             conn.rollback(); result = {"success": False, "error": "That date is already held by another customer."}
@@ -389,8 +453,8 @@ def create_hold(event_date: str, customer_name: str) -> dict:
 
 HTML = """<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Studio Desk</title><style>
 body{font-family:Inter,system-ui,sans-serif;background:#f5f7fb;margin:0;color:#172033}.wrap{max-width:980px;margin:0 auto;padding:28px}.brand{font-size:25px;font-weight:800}.muted{color:#68738a}.grid{display:grid;grid-template-columns:2fr 1fr;gap:20px;margin-top:20px}.card{background:white;border:1px solid #e1e6ef;border-radius:16px;padding:20px;box-shadow:0 5px 18px #1720330b}textarea,input,button{font:inherit}textarea,input{width:100%;box-sizing:border-box;border:1px solid #cad2df;border-radius:10px;padding:12px;margin:7px 0 12px}button{border:0;border-radius:10px;padding:11px 15px;background:#2463eb;color:#fff;font-weight:700;cursor:pointer}.secondary{background:#e9eef9;color:#24416f}.answer{white-space:pre-wrap;background:#f7f9fc;border-left:4px solid #2463eb;padding:14px;border-radius:8px;margin-top:16px}.badge{display:inline-block;border-radius:999px;padding:4px 9px;font-size:12px;background:#e8f7ed;color:#176b37}.warn{background:#fff4df;color:#805300}.item{padding:10px 0;border-bottom:1px solid #edf0f5}.small{font-size:13px}.chart-row{display:grid;grid-template-columns:150px 1fr 34px;gap:8px;align-items:center;font-size:13px;margin:6px 0}.bar{display:block;height:10px;border-radius:5px;background:#2463eb;min-width:4px}.chat{height:360px;overflow:auto;background:#e6edf5;border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:10px;margin:12px 0}.bubble{max-width:82%;padding:11px 13px;border-radius:14px;white-space:pre-wrap;line-height:1.45}.bubble.user{align-self:flex-end;background:#d9fdd3;border-bottom-right-radius:4px}.bubble.bot{align-self:flex-start;background:#fff;border-bottom-left-radius:4px;box-shadow:0 1px 2px #17203318}.bubble.flag{border-left:4px solid #d28b00;background:#fff7e6}.empty{margin:auto;color:#68738a;text-align:center}@media(max-width:700px){.grid{grid-template-columns:1fr}}
-</style></head><body><main class='wrap'><div class='brand'>Studio Desk <span class='badge'>Your Business AI</span></div><p class='muted'>A WhatsApp-style customer desk. Answers come only from the uploaded booking sheet.</p><div class='grid'><section class='card'><h2>Customer chat</h2><div id='chat' class='chat'><div class='empty'>Ask about dates, packages, prices, or booking status.</div></div><textarea id='q' rows='2' placeholder='Type a customer question...' onkeydown='if(event.key==="Enter"&&!event.shiftKey){event.preventDefault();ask()}'></textarea><button onclick='ask()'>Send</button><h3>Hold a date for 24 hours</h3><input id='date' type='date'><input id='name' placeholder='Customer name'><button class='secondary' onclick='hold()'>Request hold</button><div id='holdResult'></div></section><aside class='card'><h2>Owner desk</h2><form id='uploadForm'><input id='csv' type='file' accept='.csv,text/csv' required><button type='submit' class='secondary'>Upload booking sheet</button></form><div id='uploadResult' class='small muted'></div><h3>Escalations</h3><p class='muted small'>Questions the sheet could not answer safely.</p><div id='inbox'>Loading…</div></aside></div><section class='card' id='dashboard'><h2>Operating picture</h2><p class='muted small'>Generated from the uploaded sheet; no outside facts are added.</p><div id='dashboardContent'>Loading...</div><p><a href='/api/report.md' target='_blank'>Download grounded operating brief</a></p></section></main><script>
-function loadDashboard(){fetch('/api/dashboard').then(r=>r.json()).then(d=>{let sections=Object.entries(d.charts||{}).map(([field,items])=>{let max=Math.max(...items.map(x=>x[1]),1);return '<h3>'+esc(field.replaceAll('_',' '))+'</h3>'+items.map(x=>'<div class="chart-row"><span>'+esc(x[0])+'</span><span class="bar" style="width:'+Math.max(4,Math.round(x[1]/max*100))+'%"></span><b>'+x[1]+'</b></div>').join('')}).join('');let nums=Object.entries(d.numeric||{}).map(([field,n])=>'<div class="item"><b>'+esc(field.replaceAll('_',' '))+'</b><div class="muted small">total '+Number(n.total).toLocaleString('en-IN')+' · average '+Number(n.average).toLocaleString('en-IN')+'</div></div>').join('');document.getElementById('dashboardContent').innerHTML='<p><b>'+d.rows+'</b> records across <b>'+d.columns.length+'</b> fields.</p>'+sections+'<h3>Visible numeric measures</h3>'+ (nums||'<p class="muted">No numeric measures detected.</p>')+'<h3>Schedule</h3><p>'+d.timeline.past_or_today+' past/today · '+d.timeline.future+' future-dated rows</p><p class="muted small">'+d.limitations.join(' ')+'</p>'}).catch(()=>{document.getElementById('dashboardContent').textContent='Dashboard unavailable.'})} function addMessage(role,text,flag){let chat=document.getElementById('chat');let empty=chat.querySelector('.empty');if(empty)empty.remove();let el=document.createElement('div');el.className='bubble '+role+(flag?' flag':'');el.textContent=text;chat.appendChild(el);chat.scrollTop=chat.scrollHeight} async function ask(){let input=document.getElementById('q');let q=input.value.trim();if(!q)return;addMessage('user',q);input.value='';let r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})});let d=await r.json();let mode=d.synthesis==='openrouter'?'OpenRouter grounded rewrite':'Deterministic grounded answer';addMessage('bot',d.answer+'\\n\\n['+mode+']',Boolean(d.escalated));if(d.escalated)addMessage('bot','Owner review requested.');loadInbox()} async function hold(){let r=await fetch('/api/hold',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({event_date:document.getElementById('date').value,customer_name:document.getElementById('name').value})});let d=await r.json();document.getElementById('holdResult').innerHTML='<div class="answer">'+esc(d.success?'Date held until '+d.expires_at:d.error)+'</div>'} async function loadInbox(){let d=await (await fetch('/api/owner/inbox')).json();document.getElementById('inbox').innerHTML=d.items.length?d.items.map(x=>'<div class="item"><b>'+esc(x.question)+'</b><div class="muted small">'+esc(x.reason)+'</div></div>').join(''):'<p class="muted">No escalations yet.</p>'} document.getElementById('uploadForm').addEventListener('submit',async e=>{e.preventDefault();let f=document.getElementById('csv').files[0];let fd=new FormData();fd.append('file',f);let r=await fetch('/api/upload',{method:'POST',body:fd});let d=await r.json();document.getElementById('uploadResult').textContent=d.error||('Loaded '+d.rows+' rows from '+d.filename);loadDashboard()}); function esc(s){return String(s||'').replace(/[&<>\"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[m]))} loadInbox(); loadDashboard();
+</style></head><body><main class='wrap'><div class='brand'>Studio Desk <span class='badge'>Your Business AI</span></div><p class='muted'>A WhatsApp-style customer desk. Answers come only from the uploaded booking sheet.</p><div class='grid'><section class='card'><h2>Customer chat</h2><div id='chat' class='chat'><div class='empty'>Ask about dates, packages, prices, or booking status.</div></div><textarea id='q' rows='2' placeholder='Type a customer question...' onkeydown='if(event.key==="Enter"&&!event.shiftKey){event.preventDefault();ask()}'></textarea><button onclick='ask()'>Send</button><h3>Hold a date for 24 hours</h3><input id='date' type='date'><input id='name' placeholder='Customer name'><input id='phone' placeholder='Phone number'><button class='secondary' onclick='hold()'>Request hold</button><div id='holdResult'></div></section><aside class='card'><h2>Owner desk</h2><form id='uploadForm'><input id='csv' type='file' accept='.csv,text/csv' required><button type='submit' class='secondary'>Upload booking sheet</button></form><div id='uploadResult' class='small muted'></div><h3>Escalations</h3><p class='muted small'>Questions the sheet could not answer safely.</p><div id='inbox'>Loading…</div></aside></div><section class='card' id='dashboard'><h2>Operating picture</h2><p class='muted small'>Generated from the uploaded sheet; no outside facts are added.</p><div id='dashboardContent'>Loading...</div><p><a href='/api/report.md' target='_blank'>Download grounded operating brief</a></p></section></main><script>
+function loadDashboard(){fetch('/api/dashboard').then(r=>r.json()).then(d=>{let sections=Object.entries(d.charts||{}).map(([field,items])=>{let max=Math.max(...items.map(x=>x[1]),1);return '<h3>'+esc(field.replaceAll('_',' '))+'</h3>'+items.map(x=>'<div class="chart-row"><span>'+esc(x[0])+'</span><span class="bar" style="width:'+Math.max(4,Math.round(x[1]/max*100))+'%"></span><b>'+x[1]+'</b></div>').join('')}).join('');let nums=Object.entries(d.numeric||{}).map(([field,n])=>'<div class="item"><b>'+esc(field.replaceAll('_',' '))+'</b><div class="muted small">total '+Number(n.total).toLocaleString('en-IN')+' · average '+Number(n.average).toLocaleString('en-IN')+'</div></div>').join('');document.getElementById('dashboardContent').innerHTML='<p><b>'+d.rows+'</b> records across <b>'+d.columns.length+'</b> fields.</p>'+sections+'<h3>Visible numeric measures</h3>'+ (nums||'<p class="muted">No numeric measures detected.</p>')+'<h3>Schedule</h3><p>'+d.timeline.past_or_today+' past/today · '+d.timeline.future+' future-dated rows</p><p class="muted small">'+d.limitations.join(' ')+'</p>'}).catch(()=>{document.getElementById('dashboardContent').textContent='Dashboard unavailable.'})} function addMessage(role,text,flag){let chat=document.getElementById('chat');let empty=chat.querySelector('.empty');if(empty)empty.remove();let el=document.createElement('div');el.className='bubble '+role+(flag?' flag':'');el.textContent=text;chat.appendChild(el);chat.scrollTop=chat.scrollHeight} async function ask(){let input=document.getElementById('q');let q=input.value.trim();if(!q)return;addMessage('user',q);input.value='';let r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})});let d=await r.json();let mode=d.synthesis==='openrouter'?'OpenRouter grounded rewrite':'Deterministic grounded answer';addMessage('bot',d.answer+'\\n\\n['+mode+']',Boolean(d.escalated));if(d.escalated)addMessage('bot','Owner review requested.');loadInbox()} async function hold(){let r=await fetch('/api/hold',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({event_date:document.getElementById('date').value,customer_name:document.getElementById('name').value,customer_phone:document.getElementById('phone').value})});let d=await r.json();document.getElementById('holdResult').innerHTML='<div class="answer">'+esc(d.success?'Date held until '+d.expires_at:d.error)+'</div>'} async function loadInbox(){let d=await (await fetch('/api/owner/inbox')).json();document.getElementById('inbox').innerHTML=d.items.length?d.items.map(x=>'<div class="item"><b>'+esc(x.question)+'</b><div class="muted small">'+esc(x.reason)+'</div></div>').join(''):'<p class="muted">No escalations yet.</p>'} document.getElementById('uploadForm').addEventListener('submit',async e=>{e.preventDefault();let f=document.getElementById('csv').files[0];let fd=new FormData();fd.append('file',f);let r=await fetch('/api/upload',{method:'POST',body:fd});let d=await r.json();document.getElementById('uploadResult').textContent=d.error||('Loaded '+d.rows+' rows from '+d.filename);loadDashboard()}); function esc(s){return String(s||'').replace(/[&<>\"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[m]))} loadInbox(); loadDashboard();
 </script></body></html>"""
 
 
@@ -419,10 +483,14 @@ class Handler(BaseHTTPRequestHandler):
             except (KeyError, ValueError, UnicodeDecodeError) as exc:
                 return self.send_json({'error': str(exc)}, 400)
         length=int(self.headers.get('Content-Length','0')); data=json.loads(self.rfile.read(length) or '{}')
-        if path == '/api/chat': return self.send_json(answer_with_optional_synthesis(str(data.get('question','')), load_bookings()))
+        if path == '/api/chat':
+            result = customer_answer(str(data.get('question', '')), load_bookings())
+            # Provenance is retained internally and in owner reports, but customer replies stay conversational.
+            result['answer'] = re.sub(r"\n\nSource:.*$", "", result.get('answer', ''), flags=re.DOTALL).strip()
+            return self.send_json(result)
         if path == '/api/hold':
-            if not re.fullmatch(r'20\d{2}-\d{2}-\d{2}', str(data.get('event_date',''))) or not str(data.get('customer_name','')).strip(): return self.send_json({'success':False,'error':'Enter a valid date and customer name.'},400)
-            return self.send_json(create_hold(data['event_date'], data['customer_name']))
+            if not re.fullmatch(r'20\d{2}-\d{2}-\d{2}', str(data.get('event_date',''))) or not str(data.get('customer_name','')).strip() or not str(data.get('customer_phone','')).strip(): return self.send_json({'success':False,'error':'Enter a valid date, customer name, and phone number.'},400)
+            return self.send_json(create_hold(data['event_date'], data['customer_name'], data['customer_phone']))
         self.send_error(404)
     def log_message(self, *_): pass
 
