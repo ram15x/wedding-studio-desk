@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: wedding-studio-desk
+    runtime: python
+    rootDir: assignment
+    buildCommand: "python -m py_compile app.py"
+    startCommand: "python app.py"
+    plan: free
+    envVars:
+      - key: ASSIGNMENT_PORT
+        value: "10000"
+      - key: ASSIGNMENT_HOST
+        value: "0.0.0.0"

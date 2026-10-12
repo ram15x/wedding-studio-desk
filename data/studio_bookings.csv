@@ -1,0 +1,13 @@
+booking_id,customer_name,event_date,event_type,package,city,package_price,advance_paid,balance_due,status,album_stage
+SS-2031,Riya Sharma,2026-11-22,wedding,Full Package,Delhi,185000,60000,125000,confirmed,not_started
+SS-2034,Kabir Mehta,2026-09-14,wedding,Full Package,Gurgaon,185000,185000,0,delivered_late,in_print
+SS-2038,Pooja Nair,2026-12-06,pre-wedding,Pre-Wedding Shoot,Delhi,45000,15000,30000,confirmed,not_started
+SS-2040,Neha Kapoor,2026-12-12,wedding,Full Package,Noida,185000,50000,135000,confirmed,not_started
+SS-2041,Sameer Khan,2026-08-30,reception,Reception Only,Delhi,65000,65000,0,completed,ready
+SS-2043,Ananya Gupta,2026-12-14,wedding,Wedding Day,Delhi,120000,40000,80000,tentative,not_started
+SS-2045,Arjun Verma,2026-12-19,engagement,Engagement,Faridabad,40000,10000,30000,confirmed,not_started
+SS-2046,Meera Iyer,2026-10-25,haldi,Haldi + Mehndi,Delhi,55000,55000,0,completed,in_design
+SS-2048,Rohan Das,2027-01-17,wedding,Full Package,Jaipur,210000,70000,140000,confirmed,not_started
+SS-2050,Ishita Bose,2026-12-26,wedding,Wedding Day,Gurgaon,120000,0,120000,tentative,not_started
+SS-2052,Vikram Singh,2026-11-08,maternity,Maternity Shoot,Delhi,25000,25000,0,completed,in_design
+SS-2053,Tanya Arora,2027-02-07,wedding,Full Package,Delhi,185000,50000,135000,confirmed,not_started

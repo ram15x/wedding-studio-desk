@@ -1,0 +1,427 @@
+"""Standalone grounded wedding-studio desk for the assignment."""
+from __future__ import annotations
+
+import csv
+import json
+import os
+import re
+import sqlite3
+import threading
+import urllib.error
+import urllib.request
+from collections import Counter
+from datetime import datetime, timedelta, timezone
+from email import policy
+from email.parser import BytesParser
+from html import escape
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+
+ROOT = Path(__file__).resolve().parent
+CSV_PATH = Path(os.environ.get("ASSIGNMENT_CSV", ROOT / "data" / "studio_bookings.csv"))
+SOURCE_DISPLAY_NAME = CSV_PATH.name
+DB_PATH = ROOT / "assignment.db"
+PORT = int(os.environ.get("ASSIGNMENT_PORT", "8787"))
+HOST = os.environ.get("ASSIGNMENT_HOST", "127.0.0.1")
+DB_LOCK = threading.Lock()
+OPENROUTER_URL = os.environ.get("OPENROUTER_URL", "https://openrouter.ai/api/v1/chat/completions")
+OPENROUTER_TIMEOUT = max(3, min(int(os.environ.get("OPENROUTER_TIMEOUT_SECONDS", "20")), 60))
+
+
+def load_bookings() -> list[dict[str, str]]:
+    with CSV_PATH.open(newline="", encoding="utf-8-sig") as handle:
+        return list(csv.DictReader(handle))
+
+
+def replace_uploaded_csv(content: bytes, filename: str) -> dict:
+    global CSV_PATH, SOURCE_DISPLAY_NAME
+    if not filename.lower().endswith(".csv"):
+        raise ValueError("Only CSV files are supported for this assignment.")
+    text = content.decode("utf-8-sig")
+    rows = list(csv.DictReader(text.splitlines()))
+    if not rows or not {"booking_id", "event_date"}.issubset(rows[0]):
+        raise ValueError("The CSV must include booking_id and event_date columns.")
+    destination = ROOT / "data" / "uploaded.csv"
+    destination.write_bytes(content)
+    CSV_PATH = destination
+    SOURCE_DISPLAY_NAME = filename
+    return {"filename": filename, "rows": len(rows), "columns": list(rows[0].keys())}
+
+
+def parse_uploaded_file(handler: BaseHTTPRequestHandler) -> tuple[bytes, str]:
+    """Parse the single CSV multipart field without the removed cgi module."""
+    content_type = handler.headers.get("Content-Type", "")
+    length = int(handler.headers.get("Content-Length", "0"))
+    body = handler.rfile.read(length)
+    header = f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode("utf-8")
+    message = BytesParser(policy=policy.default).parsebytes(header + body)
+    for part in message.walk():
+        filename = part.get_filename()
+        if filename:
+            payload = part.get_payload(decode=True)
+            if payload is None:
+                raise ValueError("Uploaded file was empty.")
+            return payload, filename
+    raise ValueError("No CSV file was uploaded.")
+
+
+def db() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("""CREATE TABLE IF NOT EXISTS holds (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_date TEXT NOT NULL,
+        customer_name TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(event_date)
+    )""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS escalations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        question TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'open'
+    )""")
+    conn.commit()
+    return conn
+
+
+def money(value: str) -> str:
+    return f"₹{float(value):,.0f}"
+
+
+def display_number(field: str, value: float) -> str:
+    label = field.lower()
+    if any(token in label for token in ("price", "amount", "paid", "due", "cost", "revenue", "fee", "inr", "usd", "eur")):
+        return money(str(value))
+    return f"{value:,.2f}".rstrip("0").rstrip(".")
+
+
+def source_note() -> str:
+    return f"Source: {SOURCE_DISPLAY_NAME}. This answer uses only the uploaded booking rows."
+
+
+def _model_synthesis(question: str, grounded: dict) -> str | None:
+    """Optionally humanize a verified answer; never becomes the source of facts.
+
+    The provider is deliberately opt-in. A response is accepted only when it
+    preserves every numeric/date token from the deterministic answer. Any
+    missing configuration, network error, malformed response, or changed fact
+    falls back to the deterministic answer.
+    """
+    api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    model = os.environ.get("OPENROUTER_MODEL", "").strip()
+    if not api_key or not model or grounded.get("escalated"):
+        return None
+    baseline = str(grounded.get("answer", ""))
+    prompt = (
+        "Rewrite the verified answer for a business owner in plain language. "
+        "Use only the VERIFIED ANSWER below. Do not add facts, causes, forecasts, "
+        "recommendations, dates, amounts, or names. Keep every number and date "
+        "exactly. If it is descriptive, say it is descriptive. Return only the "
+        "answer text, with short headings if useful.\n\n"
+        f"QUESTION:\n{question}\n\nVERIFIED ANSWER:\n{baseline}"
+    )
+    payload = json.dumps({
+        "model": model,
+        "temperature": 0,
+        "max_tokens": 500,
+        "messages": [
+            {"role": "system", "content": "You are a grounded editor. Never invent."},
+            {"role": "user", "content": prompt},
+        ],
+    }).encode("utf-8")
+    request = urllib.request.Request(
+        OPENROUTER_URL,
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "http://localhost",
+            "X-Title": "Wedding Studio Desk",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=OPENROUTER_TIMEOUT) as response:
+            body = json.loads(response.read().decode("utf-8"))
+        content = body["choices"][0]["message"]["content"]
+        if not isinstance(content, str) or not content.strip():
+            return None
+        # Preserve factual anchors. This is intentionally conservative.
+        for token in re.findall(r"(?:\d+(?:[.,]\d+)*%?|20\d{2}-\d{2}-\d{2})", baseline):
+            if token not in content:
+                return None
+        if source_note() not in content:
+            content = content.rstrip() + "\n\n" + source_note()
+        return content.strip()
+    except (urllib.error.URLError, OSError, TimeoutError, ValueError, KeyError, IndexError, TypeError):
+        return None
+
+
+def answer_with_optional_synthesis(question: str, rows: list[dict[str, str]]) -> dict:
+    grounded = grounded_answer(question, rows)
+    synthesized = _model_synthesis(question, grounded)
+    if synthesized:
+        grounded = {**grounded, "answer": synthesized, "synthesis": "openrouter"}
+    else:
+        grounded = {**grounded, "synthesis": "deterministic"}
+    return grounded
+
+
+def dataset_dashboard(rows: list[dict[str, str]]) -> dict:
+    """Return deterministic, source-grounded metrics for the dashboard/report."""
+    columns = list(rows[0].keys()) if rows else []
+    grouped = {}
+    for field in ("event_type", "package", "city", "status", "album_stage"):
+        if field in columns:
+            grouped[field] = dict(Counter(row.get(field, "") for row in rows if row.get(field)))
+    numeric = {}
+    numeric_fields = []
+    for field in columns:
+        values = []
+        for row in rows:
+            try:
+                if row.get(field, "").strip() != "":
+                    values.append(float(row[field]))
+            except (TypeError, ValueError):
+                values = []
+                break
+        if values:
+            numeric_fields.append(field)
+            numeric[field] = {"total": round(sum(values), 2), "average": round(sum(values) / len(values), 2), "count": len(values)}
+    dated = []
+    for row in rows:
+        try:
+            dated.append(datetime.strptime(row.get("event_date", ""), "%Y-%m-%d").date().isoformat())
+        except ValueError:
+            continue
+    today = datetime.now(timezone.utc).date().isoformat()
+    return {
+        "source": SOURCE_DISPLAY_NAME,
+        "rows": len(rows),
+        "columns": columns,
+        "grouped": grouped,
+        "numeric": numeric,
+        "numeric_fields": numeric_fields,
+        "charts": {field: sorted(values.items(), key=lambda item: (-item[1], item[0]))[:8] for field, values in grouped.items()},
+        "timeline": {"past_or_today": sum(value <= today for value in dated), "future": sum(value > today for value in dated)},
+        "limitations": ["This view describes the uploaded rows only; it does not establish causes, policy, capacity, or future demand.", "Dates outside the uploaded sheet are unknown."]
+    }
+
+
+def _numeric_values(rows: list[dict[str, str]], field: str) -> list[float]:
+    values = []
+    for row in rows:
+        try:
+            if row.get(field, "").strip() != "":
+                values.append(float(row[field]))
+        except (TypeError, ValueError):
+            continue
+    return values
+
+
+def _field_match(question: str, columns: list[str], preferred: tuple[str, ...] = ()) -> str | None:
+    q = question.lower().replace("_", " ")
+    ordered = list(preferred) + [c for c in columns if c not in preferred]
+    for field in ordered:
+        label = field.lower().replace("_", " ")
+        if field.lower() in question.lower() or label in q:
+            return field
+    return None
+
+
+def _date_field(columns: list[str]) -> str | None:
+    return next((field for field in columns if "date" in field.lower()), None)
+
+
+def build_operating_brief(rows: list[dict[str, str]]) -> dict:
+    profile = dataset_dashboard(rows)
+    grouped, numeric = profile["grouped"], profile["numeric"]
+    observations = [f"The uploaded source contains {profile['rows']} booking records and {len(profile['columns'])} visible fields."]
+    if grouped.get("event_type"):
+        event, count = max(grouped["event_type"].items(), key=lambda item: item[1])
+        observations.append(f"The most frequent event type is {event} ({count} records).")
+    if grouped.get("city"):
+        city, count = max(grouped["city"].items(), key=lambda item: item[1])
+        observations.append(f"The most frequent city is {city} ({count} records).")
+    if numeric.get("package_price"):
+        observations.append(f"Total package price visible in the sheet is {money(str(numeric['package_price']['total']))}; this is a record total, not a forecast.")
+    if numeric.get("balance_due"):
+        observations.append(f"Visible balance due totals {money(str(numeric['balance_due']['total']))}; payment status should be confirmed with the owner before collection decisions.")
+    sop = [
+        "1. Ask for the requested event date, event type, package, and city.",
+        "2. Check the uploaded sheet before promising availability or price.",
+        "3. Use the date-hold control only for a date not already present in the sheet.",
+        "4. Treat missing policy, causes, and capacity information as unknown.",
+        "5. Escalate questions the sheet cannot support to the studio owner."
+    ]
+    return {"title": "Studio booking operating brief", "source": SOURCE_DISPLAY_NAME, "summary": "A deterministic operating view generated from the uploaded booking rows.", "observations": observations, "past_present_future": {"past_or_today_records": profile["timeline"]["past_or_today"], "future_records": profile["timeline"]["future"], "future_note": "Future bookings are scheduled rows in this file, not a forecast."}, "sop": sop, "limitations": profile["limitations"]}
+
+
+def brief_markdown(rows: list[dict[str, str]]) -> str:
+    brief = build_operating_brief(rows)
+    lines = [f"# {brief['title']}", "", f"Source: `{brief['source']}`", "", brief["summary"], "", "## Observations"]
+    lines.extend(f"- {item}" for item in brief["observations"])
+    lines.extend(["", "## Past and present", f"- Records dated today or earlier: {brief['past_present_future']['past_or_today_records']}", f"- Future-dated records: {brief['past_present_future']['future_records']}", f"- {brief['past_present_future']['future_note']}", "", "## Ready-to-use operating SOP"])
+    lines.extend(brief["sop"])
+    lines.extend(["", "## Limitations"])
+    lines.extend(f"- {item}" for item in brief["limitations"])
+    return "\n".join(lines) + "\n"
+
+
+def grounded_answer(question: str, rows: list[dict[str, str]]) -> dict:
+    q = question.lower().strip()
+    columns = list(rows[0].keys()) if rows else []
+    if not q:
+        return {"answer": "Ask a question about bookings, dates, packages, prices, status, or album stage.", "escalated": False}
+    if any(word in q for word in ("why", "cause", "reason", "should we", "recommend")):
+        return escalate(question, "The CSV contains booking records but does not establish causes or business decisions.")
+    if "what does" in q or "represent" in q or "business" in q:
+        labels = ", ".join(field.replace("_", " ") for field in columns)
+        return {"answer": f"The uploaded sheet contains {len(rows)} records with these visible fields: {labels}. It can support descriptive counts, numeric summaries, comparisons, and date lookups where those fields are populated. It does not by itself establish business policies, causes, capacity, or forecasts.\n\n{source_note()}", "escalated": False}
+    if "most common" in q or "largest" in q or "top" in q:
+        field = _field_match(q, columns, ("event_type", "package", "city", "status", "album_stage"))
+        if not field:
+            return escalate(question, "The question does not identify a categorical field to group.")
+        counts = Counter(row.get(field, "") for row in rows if row.get(field, ""))
+        if not counts:
+            return escalate(question, f"The uploaded sheet has no usable values for {field}.")
+        value, count = max(counts.items(), key=lambda item: item[1])
+        return {"answer": f"The most common {field.replace('_', ' ')} is '{value}', with {count} of {len(rows)} records ({count / len(rows):.2%}).\n\n{source_note()}", "escalated": False}
+    if "average" in q or "avg" in q or "mean" in q:
+        field = _field_match(q, columns, ("package_price", "advance_paid", "balance_due"))
+        if not field:
+            return escalate(question, "The sheet has several numeric fields; name the field to average.")
+        values = _numeric_values(rows, field)
+        if not values:
+            return escalate(question, f"{field} is not a usable numeric field in the uploaded sheet.")
+        avg = sum(values) / len(values)
+        return {"answer": f"Average {field.replace('_', ' ')} is {display_number(field, avg)} across {len(values)} records.\n\n{source_note()}", "escalated": False}
+    if any(word in q for word in ("total", "sum", "how much")):
+        field = _field_match(q, columns, ("package_price", "advance_paid", "balance_due"))
+        if field:
+            values = _numeric_values(rows, field)
+            if values:
+                return {"answer": f"The uploaded rows total {display_number(field, sum(values))} for {field.replace('_', ' ')} across {len(values)} records. This is a total of visible rows, not a forecast.\n\n{source_note()}", "escalated": False}
+    if "compare" in q or "versus" in q or " vs " in f" {q} ":
+        numeric_field = _field_match(q, columns, ("package_price", "advance_paid", "balance_due"))
+        group_field = None
+        by_match = re.search(r"\b(?:by|per|across)\s+([a-z_ ]+)", q)
+        if by_match:
+            group_field = _field_match(by_match.group(1).strip(), columns, ("event_type", "package", "city", "status", "album_stage"))
+        group_field = group_field or _field_match(q, columns, ("event_type", "package", "city", "status", "album_stage"))
+        if numeric_field and group_field and numeric_field != group_field:
+            groups = {}
+            for row in rows:
+                group = row.get(group_field, "")
+                if group:
+                    try:
+                        groups.setdefault(group, []).append(float(row[numeric_field]))
+                    except (TypeError, ValueError):
+                        pass
+            if len(groups) >= 2:
+                detail = "; ".join(f"{key}: {display_number(numeric_field, sum(values) / len(values))} average ({len(values)} records)" for key, values in sorted(groups.items()))
+                return {"answer": f"For {numeric_field.replace('_', ' ')} by {group_field.replace('_', ' ')}, the visible averages are: {detail}. This describes the uploaded rows and does not establish a cause.\n\n{source_note()}", "escalated": False}
+    date_field = _date_field(columns)
+    date_match = re.search(r"\b20\d{2}-\d{2}-\d{2}\b", q)
+    if date_match or "available" in q:
+        target = date_match.group(0) if date_match else None
+        matches = [row for row in rows if target and date_field and row.get(date_field) == target]
+        if target and matches:
+            row = matches[0]
+            status = row.get("status", "recorded")
+            availability = "not available for a new hold" if status.lower() in {"confirmed", "completed", "delivered", "delivered_late"} else "already represented in the sheet and needs owner confirmation before a new hold"
+            details = ", ".join(f"{field.replace('_', ' ')}: {row.get(field, '')}" for field in ("event_type", "package", "city", "status", "album_stage") if row.get(field))
+            return {"answer": f"{target} is {availability}. The uploaded sheet has one booking row ({details}). This is based only on the current file; confirm any change with the studio owner.\n\n{source_note()}", "escalated": False}
+        if target:
+            return {"answer": f"No booking row for {target} appears in the uploaded sheet. This is not a guarantee that the date is available outside this file.\n\n{source_note()}", "escalated": False}
+    if "future" in q or "upcoming" in q or "schedule" in q:
+        if date_field:
+            today = datetime.now(timezone.utc).date().isoformat()
+            upcoming = [row for row in rows if row.get(date_field, "") > today]
+            preview = "; ".join(f"{row.get(date_field)} ({row.get('event_type', 'event')}, {row.get('status', 'status')})" for row in sorted(upcoming, key=lambda item: item.get(date_field, ""))[:8])
+            return {"answer": f"The sheet contains {len(upcoming)} future-dated rows. Upcoming examples: {preview or 'none visible'}. This is a schedule in the uploaded file, not a demand forecast.\n\n{source_note()}", "escalated": False}
+    if any(word in q for word in ("status", "album", "package", "booking", "city", "date", "price", "payment", "balance", "field", "column")):
+        usable = ", ".join(field.replace("_", " ") for field in columns)
+        return {"answer": f"I can answer supported facts from the {len(rows)} uploaded rows. Available columns are: {usable}. Ask for a specific field, date, total, average, group comparison, or upcoming schedule.\n\n{source_note()}", "escalated": False}
+    return escalate(question, "No matching field or supported fact was found in the uploaded sheet.")
+
+
+def escalate(question: str, reason: str) -> dict:
+    now = datetime.now(timezone.utc).isoformat()
+    with DB_LOCK:
+        conn = db()
+        conn.execute("INSERT INTO escalations(question, reason, created_at) VALUES (?, ?, ?)", (question, reason, now))
+        conn.commit(); conn.close()
+    return {"answer": "I don't have enough evidence in the booking sheet to answer that safely. I sent this question to the studio owner for review.", "reason": reason, "escalated": True}
+
+
+def create_hold(event_date: str, customer_name: str) -> dict:
+    now = datetime.now(timezone.utc)
+    expires = now + timedelta(hours=24)
+    booked = next((row for row in load_bookings() if row.get("event_date") == event_date), None)
+    if booked:
+        return {"success": False, "error": "That date already appears in the uploaded booking sheet and cannot be held."}
+    with DB_LOCK:
+        conn = db(); conn.execute("DELETE FROM holds WHERE expires_at <= ?", (now.isoformat(),))
+        try:
+            conn.execute("INSERT INTO holds(event_date, customer_name, expires_at, created_at) VALUES (?, ?, ?, ?)", (event_date, customer_name, expires.isoformat(), now.isoformat()))
+            conn.commit(); result = {"success": True, "event_date": event_date, "customer_name": customer_name, "expires_at": expires.isoformat()}
+        except sqlite3.IntegrityError:
+            conn.rollback(); result = {"success": False, "error": "That date is already held by another customer."}
+        conn.close()
+    return result
+
+
+HTML = """<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Studio Desk</title><style>
+body{font-family:Inter,system-ui,sans-serif;background:#f5f7fb;margin:0;color:#172033}.wrap{max-width:980px;margin:0 auto;padding:28px}.brand{font-size:25px;font-weight:800}.muted{color:#68738a}.grid{display:grid;grid-template-columns:2fr 1fr;gap:20px;margin-top:20px}.card{background:white;border:1px solid #e1e6ef;border-radius:16px;padding:20px;box-shadow:0 5px 18px #1720330b}textarea,input,button{font:inherit}textarea,input{width:100%;box-sizing:border-box;border:1px solid #cad2df;border-radius:10px;padding:12px;margin:7px 0 12px}button{border:0;border-radius:10px;padding:11px 15px;background:#2463eb;color:#fff;font-weight:700;cursor:pointer}.secondary{background:#e9eef9;color:#24416f}.answer{white-space:pre-wrap;background:#f7f9fc;border-left:4px solid #2463eb;padding:14px;border-radius:8px;margin-top:16px}.badge{display:inline-block;border-radius:999px;padding:4px 9px;font-size:12px;background:#e8f7ed;color:#176b37}.warn{background:#fff4df;color:#805300}.item{padding:10px 0;border-bottom:1px solid #edf0f5}.small{font-size:13px}.chart-row{display:grid;grid-template-columns:150px 1fr 34px;gap:8px;align-items:center;font-size:13px;margin:6px 0}.bar{display:block;height:10px;border-radius:5px;background:#2463eb;min-width:4px}.chat{height:360px;overflow:auto;background:#e6edf5;border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:10px;margin:12px 0}.bubble{max-width:82%;padding:11px 13px;border-radius:14px;white-space:pre-wrap;line-height:1.45}.bubble.user{align-self:flex-end;background:#d9fdd3;border-bottom-right-radius:4px}.bubble.bot{align-self:flex-start;background:#fff;border-bottom-left-radius:4px;box-shadow:0 1px 2px #17203318}.bubble.flag{border-left:4px solid #d28b00;background:#fff7e6}.empty{margin:auto;color:#68738a;text-align:center}@media(max-width:700px){.grid{grid-template-columns:1fr}}
+</style></head><body><main class='wrap'><div class='brand'>Studio Desk <span class='badge'>Your Business AI</span></div><p class='muted'>A WhatsApp-style customer desk. Answers come only from the uploaded booking sheet.</p><div class='grid'><section class='card'><h2>Customer chat</h2><div id='chat' class='chat'><div class='empty'>Ask about dates, packages, prices, or booking status.</div></div><textarea id='q' rows='2' placeholder='Type a customer question...' onkeydown='if(event.key==="Enter"&&!event.shiftKey){event.preventDefault();ask()}'></textarea><button onclick='ask()'>Send</button><h3>Hold a date for 24 hours</h3><input id='date' type='date'><input id='name' placeholder='Customer name'><button class='secondary' onclick='hold()'>Request hold</button><div id='holdResult'></div></section><aside class='card'><h2>Owner desk</h2><form id='uploadForm'><input id='csv' type='file' accept='.csv,text/csv' required><button type='submit' class='secondary'>Upload booking sheet</button></form><div id='uploadResult' class='small muted'></div><h3>Escalations</h3><p class='muted small'>Questions the sheet could not answer safely.</p><div id='inbox'>Loading…</div></aside></div><section class='card' id='dashboard'><h2>Operating picture</h2><p class='muted small'>Generated from the uploaded sheet; no outside facts are added.</p><div id='dashboardContent'>Loading...</div><p><a href='/api/report.md' target='_blank'>Download grounded operating brief</a></p></section></main><script>
+function loadDashboard(){fetch('/api/dashboard').then(r=>r.json()).then(d=>{let sections=Object.entries(d.charts||{}).map(([field,items])=>{let max=Math.max(...items.map(x=>x[1]),1);return '<h3>'+esc(field.replaceAll('_',' '))+'</h3>'+items.map(x=>'<div class="chart-row"><span>'+esc(x[0])+'</span><span class="bar" style="width:'+Math.max(4,Math.round(x[1]/max*100))+'%"></span><b>'+x[1]+'</b></div>').join('')}).join('');let nums=Object.entries(d.numeric||{}).map(([field,n])=>'<div class="item"><b>'+esc(field.replaceAll('_',' '))+'</b><div class="muted small">total '+Number(n.total).toLocaleString('en-IN')+' · average '+Number(n.average).toLocaleString('en-IN')+'</div></div>').join('');document.getElementById('dashboardContent').innerHTML='<p><b>'+d.rows+'</b> records across <b>'+d.columns.length+'</b> fields.</p>'+sections+'<h3>Visible numeric measures</h3>'+ (nums||'<p class="muted">No numeric measures detected.</p>')+'<h3>Schedule</h3><p>'+d.timeline.past_or_today+' past/today · '+d.timeline.future+' future-dated rows</p><p class="muted small">'+d.limitations.join(' ')+'</p>'}).catch(()=>{document.getElementById('dashboardContent').textContent='Dashboard unavailable.'})} function addMessage(role,text,flag){let chat=document.getElementById('chat');let empty=chat.querySelector('.empty');if(empty)empty.remove();let el=document.createElement('div');el.className='bubble '+role+(flag?' flag':'');el.textContent=text;chat.appendChild(el);chat.scrollTop=chat.scrollHeight} async function ask(){let input=document.getElementById('q');let q=input.value.trim();if(!q)return;addMessage('user',q);input.value='';let r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})});let d=await r.json();let mode=d.synthesis==='openrouter'?'OpenRouter grounded rewrite':'Deterministic grounded answer';addMessage('bot',d.answer+'\\n\\n['+mode+']',Boolean(d.escalated));if(d.escalated)addMessage('bot','Owner review requested.');loadInbox()} async function hold(){let r=await fetch('/api/hold',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({event_date:document.getElementById('date').value,customer_name:document.getElementById('name').value})});let d=await r.json();document.getElementById('holdResult').innerHTML='<div class="answer">'+esc(d.success?'Date held until '+d.expires_at:d.error)+'</div>'} async function loadInbox(){let d=await (await fetch('/api/owner/inbox')).json();document.getElementById('inbox').innerHTML=d.items.length?d.items.map(x=>'<div class="item"><b>'+esc(x.question)+'</b><div class="muted small">'+esc(x.reason)+'</div></div>').join(''):'<p class="muted">No escalations yet.</p>'} document.getElementById('uploadForm').addEventListener('submit',async e=>{e.preventDefault();let f=document.getElementById('csv').files[0];let fd=new FormData();fd.append('file',f);let r=await fetch('/api/upload',{method:'POST',body:fd});let d=await r.json();document.getElementById('uploadResult').textContent=d.error||('Loaded '+d.rows+' rows from '+d.filename);loadDashboard()}); function esc(s){return String(s||'').replace(/[&<>\"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[m]))} loadInbox(); loadDashboard();
+</script></body></html>"""
+
+
+class Handler(BaseHTTPRequestHandler):
+    def send_json(self, payload: dict, status=200):
+        body = json.dumps(payload).encode(); self.send_response(status); self.send_header('Content-Type','application/json'); self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body)
+    def send_text(self, body: str, content_type='text/plain; charset=utf-8', status=200):
+        encoded = body.encode('utf-8'); self.send_response(status); self.send_header('Content-Type', content_type); self.send_header('Content-Length', str(len(encoded))); self.end_headers(); self.wfile.write(encoded)
+    def do_GET(self):
+        path = urlparse(self.path).path
+        if path == '/health': return self.send_json({'status':'ok','rows':len(load_bookings())})
+        if path == '/api/dashboard': return self.send_json(dataset_dashboard(load_bookings()))
+        if path == '/api/report': return self.send_json(build_operating_brief(load_bookings()))
+        if path == '/api/report.md': return self.send_text(brief_markdown(load_bookings()), 'text/markdown; charset=utf-8')
+        if path == '/api/owner/inbox':
+            conn=db(); items=[dict(x) for x in conn.execute('SELECT * FROM escalations WHERE status = "open" ORDER BY id DESC')]; conn.close(); return self.send_json({'items':items})
+        if path == '/':
+            body=HTML.encode(); self.send_response(200); self.send_header('Content-Type','text/html; charset=utf-8'); self.send_header('Content-Length',str(len(body))); self.end_headers(); self.wfile.write(body); return
+        self.send_error(404)
+    def do_POST(self):
+        path=urlparse(self.path).path
+        if path == '/api/upload':
+            try:
+                content, filename = parse_uploaded_file(self)
+                return self.send_json(replace_uploaded_csv(content, filename))
+            except (KeyError, ValueError, UnicodeDecodeError) as exc:
+                return self.send_json({'error': str(exc)}, 400)
+        length=int(self.headers.get('Content-Length','0')); data=json.loads(self.rfile.read(length) or '{}')
+        if path == '/api/chat': return self.send_json(answer_with_optional_synthesis(str(data.get('question','')), load_bookings()))
+        if path == '/api/hold':
+            if not re.fullmatch(r'20\d{2}-\d{2}-\d{2}', str(data.get('event_date',''))) or not str(data.get('customer_name','')).strip(): return self.send_json({'success':False,'error':'Enter a valid date and customer name.'},400)
+            return self.send_json(create_hold(data['event_date'], data['customer_name']))
+        self.send_error(404)
+    def log_message(self, *_): pass
+
+
+if __name__ == '__main__':
+    (ROOT / 'data').mkdir(exist_ok=True)
+    if not CSV_PATH.exists(): raise SystemExit(f'CSV not found: {CSV_PATH}')
+    db().close()
+    print(f'Studio Desk using {CSV_PATH.name} ({len(load_bookings())} rows)')
+    print(f'Open http://127.0.0.1:{PORT}')
+    ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
+
