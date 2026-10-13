@@ -356,7 +356,7 @@ class AssignmentDeskTests(unittest.TestCase):
         result = app.customer_answer("Can I book 20 December 2026?", app.load_bookings())
         self.assertEqual(result.get("hold_offer"), "2026-12-20")
 
-    def test_owner_requires_basic_auth_even_on_localhost(self):
+    def test_owner_auth_parser_still_rejects_missing_credentials(self):
         class Handler:
             client_address = ("127.0.0.1", 1)
             headers = {}
