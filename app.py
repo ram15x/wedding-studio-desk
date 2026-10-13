@@ -21,6 +21,35 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(__file__).resolve().parent
+
+
+def _load_local_env() -> None:
+    """Load developer-only settings without overwriting the shell environment.
+
+    Secrets belong in the ignored ``.env.local`` file or the process
+    environment; this loader never logs, persists, or commits their values.
+    """
+    local_env = ROOT / ".env.local"
+    if not local_env.is_file():
+        return
+    try:
+        lines = local_env.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key, value = key.strip(), value.strip()
+        if not key or key not in {"OPENROUTER_API_KEYS", "OPENROUTER_API_KEY", "OPENROUTER_MODELS", "OPENROUTER_MODEL", "OPENROUTER_ALLOW_GROUNDED_DATA", "OPENROUTER_TIMEOUT_SECONDS", "OWNER_PASSWORD"}:
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        os.environ.setdefault(key, value)
+
+
+_load_local_env()
 CSV_PATH = Path(os.environ.get("ASSIGNMENT_CSV", ROOT / "data" / "studio_bookings.csv"))
 SOURCE_DISPLAY_NAME = CSV_PATH.name
 DB_PATH = ROOT / "assignment.db"

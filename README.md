@@ -17,13 +17,24 @@ No external model, API key, or database server is required for the deterministic
 
 For more natural questions and replies, the app can optionally call OpenRouter to classify the question into a small intent schema. Only the question text and visible column names are sent for intent classification; booking rows, credentials, and answers are not sent. The model never computes booking facts. The deterministic engine reads the CSV, enforces privacy, calculates the result, and remains the fallback if the key is missing, the provider fails, or validation rejects the response.
 
-Set the key only in the local process environment; do not put it in Git or the CSV:
+For a one-off process, set the key only in the local environment; do not put it in Git or the CSV:
 
 ```powershell
 $env:OPENROUTER_API_KEY = Get-Clipboard
 $env:OPENROUTER_MODEL = "openai/gpt-4o-mini"
 py -3 app.py
 ```
+
+For a persistent local setup, create `.env.local` once. It is ignored by Git and loaded automatically on every local start. You can copy the three-key value from the clipboard without typing or printing it:
+
+```powershell
+Set-Content .env.local ("OPENROUTER_API_KEYS=" + (Get-Clipboard).Trim())
+Add-Content .env.local "OPENROUTER_MODELS=openai/gpt-4o-mini,google/gemini-2.0-flash,openai/gpt-4o-mini"
+Add-Content .env.local "OPENROUTER_ALLOW_GROUNDED_DATA=1"
+py -3 app.py
+```
+
+The tracked `.env.local.example` shows the expected shape. Real keys stay only in `.env.local`; the app never prints them. The pool is tried in order after provider failures. The LLM may classify wording and rewrite a verified answer, but the CSV engine remains authoritative for facts, calculations, and privacy.
 
 For a local fallback pool, provide comma-separated values. These are read only from the process environment; do not commit them to `.env` or Git:
 

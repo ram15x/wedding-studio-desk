@@ -239,6 +239,18 @@ class AssignmentDeskTests(unittest.TestCase):
         self.assertEqual(result["synthesis"], "deterministic")
         self.assertIn("7 of 12", result["answer"])
 
+    def test_local_env_loader_reads_ignored_provider_pool_without_overwriting_shell(self):
+        with tempfile.TemporaryDirectory() as directory:
+            local_root = Path(directory)
+            (local_root / ".env.local").write_text(
+                "OPENROUTER_API_KEYS=key-a,key-b\nOPENROUTER_MODELS=model-a,model-b\n",
+                encoding="utf-8",
+            )
+            with mock.patch.object(app, "ROOT", local_root), mock.patch.dict(app.os.environ, {}, clear=True):
+                app._load_local_env()
+                self.assertEqual(app.os.environ["OPENROUTER_API_KEYS"], "key-a,key-b")
+                self.assertEqual(app.os.environ["OPENROUTER_MODELS"], "model-a,model-b")
+
     def test_synthesis_must_preserve_verified_numeric_anchors(self):
         class Response:
             def __enter__(self): return self
