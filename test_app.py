@@ -338,6 +338,7 @@ class AssignmentDeskTests(unittest.TestCase):
         self.assertIn("6 bookings", result["answer"])
 
     def test_openrouter_pool_rotates_key_and_model_on_provider_failure(self):
+        app.OPENROUTER_CURSOR = 0
         with mock.patch.dict(app.os.environ, {"OPENROUTER_API_KEYS": "key-a,key-b", "OPENROUTER_MODELS": "model-a,model-b"}, clear=True):
             self.assertEqual(app._openrouter_options(), [("key-a", "model-a"), ("key-b", "model-b")])
             class Response:
@@ -353,6 +354,22 @@ class AssignmentDeskTests(unittest.TestCase):
             with mock.patch("app.urllib.request.urlopen", side_effect=fake_urlopen):
                 result = app._openrouter_call([], 10)
         self.assertEqual(result, {"ok": True})
+        self.assertEqual(calls, ["Bearer key-a", "Bearer key-b"])
+
+    def test_openrouter_pool_starts_next_request_with_next_key(self):
+        app.OPENROUTER_CURSOR = 0
+        with mock.patch.dict(app.os.environ, {"OPENROUTER_API_KEYS": "key-a,key-b", "OPENROUTER_MODELS": "model-a,model-b"}, clear=True):
+            class Response:
+                def __enter__(self): return self
+                def __exit__(self, *args): return False
+                def read(self): return b'{"ok": true}'
+            calls = []
+            def fake_urlopen(request, timeout):
+                calls.append(request.headers["Authorization"])
+                return Response()
+            with mock.patch("app.urllib.request.urlopen", side_effect=fake_urlopen):
+                self.assertEqual(app._openrouter_call([], 10), {"ok": True})
+                self.assertEqual(app._openrouter_call([], 10), {"ok": True})
         self.assertEqual(calls, ["Bearer key-a", "Bearer key-b"])
 
 

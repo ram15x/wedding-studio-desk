@@ -60,6 +60,8 @@ SESSION_LOCK = threading.Lock()
 SESSIONS: dict[str, set[str]] = {}
 OPENROUTER_URL = os.environ.get("OPENROUTER_URL", "https://openrouter.ai/api/v1/chat/completions")
 OPENROUTER_TIMEOUT = max(3, min(int(os.environ.get("OPENROUTER_TIMEOUT_SECONDS", "20")), 60))
+OPENROUTER_CURSOR_LOCK = threading.Lock()
+OPENROUTER_CURSOR = 0
 INTENT_KINDS = {"date_availability", "package_price", "count", "most_common", "personal_lookup", "unsupported"}
 INTENT_FIELDS = {"event_type", "package", "city", "status", "album_stage", "package_price", "advance_paid", "balance_due", ""}
 
@@ -78,8 +80,16 @@ def _openrouter_options() -> list[tuple[str, str]]:
 
 
 def _openrouter_call(messages: list[dict], max_tokens: int) -> dict | None:
-    """Try configured key/model pairs; never return an unvalidated provider body."""
-    for api_key, model in _openrouter_options():
+    """Rotate configured key/model pairs and fall back after provider failures."""
+    options = _openrouter_options()
+    if not options:
+        return None
+    global OPENROUTER_CURSOR
+    with OPENROUTER_CURSOR_LOCK:
+        start = OPENROUTER_CURSOR % len(options)
+        OPENROUTER_CURSOR = (OPENROUTER_CURSOR + 1) % len(options)
+    ordered_options = options[start:] + options[:start]
+    for api_key, model in ordered_options:
         request_body = json.dumps({"model": model, "temperature": 0, "max_tokens": max_tokens, "messages": messages}).encode("utf-8")
         request = urllib.request.Request(OPENROUTER_URL, data=request_body, headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "HTTP-Referer": "http://localhost", "X-Title": "Wedding Studio Desk"}, method="POST")
         try:
