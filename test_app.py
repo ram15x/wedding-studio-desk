@@ -363,5 +363,13 @@ class AssignmentDeskTests(unittest.TestCase):
         with mock.patch.dict(app.os.environ, {"OWNER_PASSWORD": "secret"}, clear=True):
             self.assertFalse(app.owner_authorized(Handler()))
 
+    def test_explicit_booking_field_beats_model_intent_label(self):
+        rows = app.load_bookings()
+        intent = {"kind": "personal_lookup", "field": "status", "value": "", "date": "", "booking_id": "SS-2043", "name": ""}
+        with mock.patch.object(app, "_model_intent", return_value=intent), mock.patch.object(app, "_model_synthesis", return_value=None):
+            result = app.answer_with_optional_synthesis("What is my customer name SS-2043?", rows)
+        self.assertIn("Ananya Gupta", result["answer"])
+        self.assertNotIn("tentative", result["answer"])
+
 if __name__ == "__main__":
     unittest.main()

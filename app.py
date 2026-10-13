@@ -296,6 +296,10 @@ def answer_with_optional_synthesis(question: str, rows: list[dict[str, str]], co
     columns = list(rows[0].keys()) if rows else []
     intent = _model_intent(question, columns)
     routed_question = _intent_query(intent) if intent else None
+    # Explicit booking-field questions are already precise. Do not let a
+    # probabilistic intent label replace the field named by the customer.
+    if re.search(r"\bSS-\d+\b", question, re.IGNORECASE) and re.search(r"\b(?:balance|album|status|booking|package|event|city|location|customer|name|date|when|price|cost)\b", question.lower()):
+        routed_question = None
     # Do not let a model invent a year for a day/month question. The local
     # resolver is authoritative and only accepts a unique matching date.
     if intent and intent.get("kind") == "date_availability" and intent.get("date"):
