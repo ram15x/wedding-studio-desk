@@ -347,5 +347,21 @@ class AssignmentDeskTests(unittest.TestCase):
         with mock.patch.object(app, "_openrouter_options", return_value=[("key", "model")]), mock.patch.object(app, "_openrouter_call", return_value=body), mock.patch.dict(app.os.environ, {"OPENROUTER_ALLOW_GROUNDED_DATA": "1"}):
             self.assertIsNone(app._model_synthesis("Do you provide a haldi shoot?", grounded))
 
+    def test_customer_page_has_inline_hold_flow(self):
+        page = app.customer_page()
+        self.assertIn("function addInlineHold", page)
+        self.assertIn("if(d.hold_offer)addInlineHold", page)
+
+    def test_free_date_returns_hold_offer(self):
+        result = app.customer_answer("Can I book 20 December 2026?", app.load_bookings())
+        self.assertEqual(result.get("hold_offer"), "2026-12-20")
+
+    def test_owner_requires_basic_auth_even_on_localhost(self):
+        class Handler:
+            client_address = ("127.0.0.1", 1)
+            headers = {}
+        with mock.patch.dict(app.os.environ, {"OWNER_PASSWORD": "secret"}, clear=True):
+            self.assertFalse(app.owner_authorized(Handler()))
+
 if __name__ == "__main__":
     unittest.main()

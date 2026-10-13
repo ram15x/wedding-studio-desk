@@ -110,7 +110,7 @@ Will bookings increase next month?
 Use the customer page like a WhatsApp conversation:
 
 1. Ask `Is 20 December 2026 available?`
-2. If it is free, enter a name and phone number and choose **Request hold**.
+2. If it is free, the chat offers an in-chat hold form; enter a name and phone number and choose **Request hold**. The separate hold form remains available as a fallback.
 3. Ask `What is my balance for SS-2043?` to retrieve a booking-specific value.
 4. Ask an unsupported question such as `Why did bookings decline?`; it is escalated to the owner.
 5. Open **Owner desk**, reply to the escalation, then return to **Customer chat** to see the owner reply in the same conversation.
@@ -121,14 +121,14 @@ Choose a date, customer name, and phone, then select **Request hold**. A free da
 
 ## Owner desk
 
-The customer page keeps owner tools hidden. When the app is opened locally on `127.0.0.1`, the owner desk opens without a browser username/password prompt for this assignment demo. Non-local requests still require Basic Auth using:
+The customer page keeps owner tools hidden. The owner desk always requires HTTP Basic Auth, including local runs. Configure a local password before starting the app:
 
 ```powershell
 $env:OWNER_PASSWORD = "choose-a-local-owner-password"
 py -3 app.py
 ```
 
-Open `http://127.0.0.1:8787/owner` directly. The owner desk can upload a replacement CSV, review escalations, see active holds, and reply to an escalated customer conversation. Do not expose this demo server publicly without adding real authentication; localhost bypass is intentional for the assignment UI.
+Open `http://127.0.0.1:8787/owner` directly. The owner desk can upload a replacement CSV, review escalations, see active holds, and reply to an escalated customer conversation. Do not expose this demo server publicly without real deployment authentication and durable storage.
 
 ## Owner dashboard
 
