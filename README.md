@@ -28,7 +28,8 @@ py -3 app.py
 For a persistent local setup, create `.env.local` once. It is ignored by Git and loaded automatically on every local start. You can copy the three-key value from the clipboard without typing or printing it:
 
 ```powershell
-Set-Content .env.local ("OPENROUTER_API_KEYS=" + (Get-Clipboard).Trim())
+$pool = ((Get-Clipboard).Trim() -replace "\s+", ",")
+Set-Content .env.local ("OPENROUTER_API_KEYS=" + $pool)
 Add-Content .env.local "OPENROUTER_MODELS=openai/gpt-4o-mini,google/gemini-2.0-flash,openai/gpt-4o-mini"
 Add-Content .env.local "OPENROUTER_ALLOW_GROUNDED_DATA=1"
 py -3 app.py
