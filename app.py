@@ -268,6 +268,16 @@ def _model_synthesis(question: str, grounded: dict) -> str | None:
         for token in anchors:
             if token not in content:
                 return None
+        baseline_lower, content_lower = baseline.lower(), content.lower()
+        # Numeric anchors alone cannot protect semantic polarity: a model can
+        # repeat a date/amount while reversing a booked/free decision. Keep
+        # the deterministic answer whenever availability polarity changes.
+        baseline_booked = any(phrase in baseline_lower for phrase in ("already booked", "not available", "unavailable"))
+        baseline_free = "looks free" in baseline_lower or ("available for a new hold" in baseline_lower and "not available" not in baseline_lower)
+        content_booked = any(phrase in content_lower for phrase in ("booked", "not available", "unavailable"))
+        content_free = any(phrase in content_lower for phrase in ("looks free", "available", "hold it", "hold it for"))
+        if (baseline_booked and not content_booked) or (baseline_free and not content_free) or (baseline_booked and content_free and not content_booked):
+            return None
         if source_note() not in content:
             content = content.rstrip() + "\n\n" + source_note()
         return content.strip()
@@ -281,6 +291,15 @@ def answer_with_optional_synthesis(question: str, rows: list[dict[str, str]], co
     columns = list(rows[0].keys()) if rows else []
     intent = _model_intent(question, columns)
     routed_question = _intent_query(intent) if intent else None
+    # Do not let a model invent a year for a day/month question. The local
+    # resolver is authoritative and only accepts a unique matching date.
+    if intent and intent.get("kind") == "date_availability" and intent.get("date"):
+        deterministic_date = _question_date(question, rows)
+        explicit_year = re.search(r"\b20\d{2}\b", question.lower())
+        if not explicit_year and deterministic_date != intent.get("date"):
+            routed_question = None
+        elif explicit_year and deterministic_date and deterministic_date != intent.get("date"):
+            routed_question = None
     grounded = grounded_answer(routed_question or question, rows, conversation_id)
     if routed_question:
         grounded = {**grounded, "intent_assisted": True}

@@ -278,6 +278,26 @@ class AssignmentDeskTests(unittest.TestCase):
         self.assertEqual(result["synthesis"], "openrouter")
         self.assertIn("Source: studio_bookings.csv", result["answer"])
 
+    def test_synthesis_rejects_availability_polarity_flip(self):
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
+            def read(self):
+                return b'{"choices":[{"message":{"content":"December 14 is currently available for a new booking."}}]}'
+        with mock.patch.dict(app.os.environ, {"OPENROUTER_API_KEY": "test-only", "OPENROUTER_MODEL": "test/model", "OPENROUTER_ALLOW_GROUNDED_DATA": "1"}, clear=True):
+            with mock.patch("app.urllib.request.urlopen", return_value=Response()):
+                result = app.answer_with_optional_synthesis("is 14 december booked", app.load_bookings())
+        self.assertEqual(result["synthesis"], "deterministic")
+        self.assertIn("already booked", result["answer"])
+
+    def test_model_cannot_invent_year_for_day_month_question(self):
+        intent = {"kind": "date_availability", "field": "", "value": "", "date": "2023-12-14", "booking_id": "", "name": ""}
+        with mock.patch("app._model_intent", return_value=intent), mock.patch("app._model_synthesis", return_value=None):
+            result = app.answer_with_optional_synthesis("is 14 december booked", app.load_bookings())
+        self.assertFalse(result["escalated"])
+        self.assertIn("already booked", result["answer"])
+        self.assertNotIn("2023-12-14", result["answer"])
+
     def test_model_intent_is_strict_and_receives_schema_not_rows(self):
         captured = {}
         class Response:
