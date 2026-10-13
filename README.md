@@ -21,7 +21,7 @@ For a one-off process, set the key only in the local environment; do not put it 
 
 ```powershell
 $env:OPENROUTER_API_KEY = Get-Clipboard
-$env:OPENROUTER_MODEL = "openai/gpt-4o-mini"
+$env:OPENROUTER_MODEL = "google/gemma-4-31b-it:free"
 py -3 app.py
 ```
 
@@ -30,12 +30,12 @@ For a persistent local setup, create `.env.local` once. It is ignored by Git and
 ```powershell
 $pool = ((Get-Clipboard).Trim() -replace "\s+", ",")
 Set-Content .env.local ("OPENROUTER_API_KEYS=" + $pool)
-Add-Content .env.local "OPENROUTER_MODELS=openai/gpt-4o-mini,google/gemini-2.0-flash,openai/gpt-4o-mini"
+Add-Content .env.local "OPENROUTER_MODELS=google/gemma-4-31b-it:free,google/gemma-4-31b-it:free,google/gemma-4-31b-it:free"
 Add-Content .env.local "OPENROUTER_ALLOW_GROUNDED_DATA=1"
 py -3 app.py
 ```
 
-The tracked `.env.local.example` shows the expected shape. Real keys stay only in `.env.local`; the app never prints them. The pool is tried in order after provider failures. The LLM may classify wording and rewrite a verified answer, but the CSV engine remains authoritative for facts, calculations, and privacy.
+The tracked `.env.local.example` shows the expected shape. Real keys stay only in `.env.local`; the app never prints them. Configured key/model pairs rotate round-robin for successive calls, and a failed pair falls through to the remaining pairs. Rotation distributes requests but cannot bypass a shared provider account or free-tier quota. The LLM may classify wording and rewrite a verified answer, but the CSV engine remains authoritative for facts, calculations, and privacy.
 
 For a local fallback pool, provide comma-separated values. These are read only from the process environment; do not commit them to `.env` or Git:
 
@@ -115,6 +115,8 @@ Use the customer page like a WhatsApp conversation:
 4. Ask an unsupported question such as `Why did bookings decline?`; it is escalated to the owner.
 5. Open **Owner desk**, reply to the escalation, then return to **Customer chat** to see the owner reply in the same conversation.
 
+The owner inbox shows current open escalations. Historical local demo rows can be cleared by removing only the ignored `assignment.db`; this does not change the supplied CSV.
+
 ## Date holds
 
 Choose a date, customer name, and phone, then select **Request hold**. A free date is held for 24 hours. The same date cannot be held twice while the first hold is active. Dates already present in the CSV cannot be held. The owner can confirm or release an active hold from `/owner`.
@@ -143,6 +145,8 @@ From the project folder:
 ```powershell
 py -3 -m unittest -q test_app.py
 ```
+
+The suite covers natural customer phrasing, privacy boundaries, grounded calculations, date holds, escalation, owner replies, CSV replacement, and provider-pool rotation. Provider calls are optional in tests; provider failures must fall back to deterministic answers.
 
 The local SQLite file `assignment.db` and Python caches are intentionally ignored by Git.
 
