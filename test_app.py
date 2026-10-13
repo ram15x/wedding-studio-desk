@@ -45,7 +45,7 @@ class AssignmentDeskTests(unittest.TestCase):
             ("where is my album SS-2043", "not started"),
             ("what is the status of SS-2043", "tentative"),
             ("which city has the most bookings", "Delhi"),
-            ("how many bookings are confirmed", "6 bookings"),
+            ("how many bookings are confirmed", "Owner analytics"),
         ]
         for question, expected in cases:
             with self.subTest(question=question):
@@ -59,11 +59,12 @@ class AssignmentDeskTests(unittest.TestCase):
         result = app.customer_answer("What is the total balance due?", app.load_bookings())
         self.assertIn("specific booking", result["answer"])
 
-    def test_customer_chat_answers_safe_public_catalogue_aggregates(self):
+    def test_customer_chat_keeps_owner_analytics_private(self):
         rows = app.load_bookings()
-        self.assertIn("6 bookings", app.customer_answer("How many bookings are confirmed?", rows)["answer"])
-        self.assertIn("Owner analytics", app.customer_answer("Which city has the most bookings?", rows)["answer"])
-        self.assertIn("Owner analytics", app.customer_answer("Which event type is most common?", rows)["answer"])
+        for question in ("How many bookings are confirmed?", "Which city has the most bookings?", "Which event type is most common?", "What upcoming bookings are there?", "What data is in the sheet?"):
+            with self.subTest(question=question):
+                self.assertIn("Owner analytics", app.customer_answer(question, rows)["answer"])
+        self.assertIn("6 bookings", app.grounded_answer("How many bookings are confirmed?", rows)["answer"])
 
     def test_customer_questions_cover_twenty_realistic_phrasings(self):
         rows = app.load_bookings()
@@ -209,11 +210,10 @@ class AssignmentDeskTests(unittest.TestCase):
         self.assertFalse(haldi["escalated"])
         self.assertIn("Haldi + Mehndi", haldi["answer"])
 
-    def test_customer_can_ask_what_data_is_available(self):
+    def test_customer_schema_question_stays_on_owner_desk(self):
         result = app.customer_answer("What data is in the sheet?", app.load_bookings())
         self.assertFalse(result["escalated"])
-        self.assertIn("booking id", result["answer"])
-        self.assertIn("event date", result["answer"])
+        self.assertIn("Owner analytics", result["answer"])
 
     def test_package_price_reply_is_natural(self):
         result = app.grounded_answer("How much is the Full Package?", app.load_bookings())
@@ -340,6 +340,12 @@ class AssignmentDeskTests(unittest.TestCase):
         self.assertEqual(result, {"ok": True})
         self.assertEqual(calls, ["Bearer key-a", "Bearer key-b"])
 
+
+    def test_model_cannot_add_customer_ownership_to_public_package_answer(self):
+        grounded = {"answer": "Yes, Haldi + Mehndi appears in the current booking sheet. Ask me for its recorded price if you would like to check it.", "escalated": False}
+        body = {"choices": [{"message": {"content": "Yes, Haldi + Mehndi is included in your current booking."}}]}
+        with mock.patch.object(app, "_openrouter_options", return_value=[("key", "model")]), mock.patch.object(app, "_openrouter_call", return_value=body), mock.patch.dict(app.os.environ, {"OPENROUTER_ALLOW_GROUNDED_DATA": "1"}):
+            self.assertIsNone(app._model_synthesis("Do you provide a haldi shoot?", grounded))
 
 if __name__ == "__main__":
     unittest.main()

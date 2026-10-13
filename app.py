@@ -278,6 +278,11 @@ def _model_synthesis(question: str, grounded: dict) -> str | None:
         content_free = any(phrase in content_lower for phrase in ("looks free", "available", "hold it", "hold it for"))
         if (baseline_booked and not content_booked) or (baseline_free and not content_free) or (baseline_booked and content_free and not content_booked):
             return None
+        # The editor must not turn a public catalogue answer into a claim about
+        # the current customer's booking. Ownership/inclusion claims require a
+        # verified booking-specific baseline.
+        if not re.search(r"\bSS-\d+\b", baseline_lower) and re.search(r"\b(?:your|my) (?:current )?booking\b|\bincluded in your\b", content_lower):
+            return None
         if source_note() not in content:
             content = content.rstrip() + "\n\n" + source_note()
         return content.strip()
@@ -315,15 +320,15 @@ def customer_answer(question: str, rows: list[dict[str, str]], conversation_id: 
     """Return a customer-safe answer; aggregate owner analytics stay private."""
     lowered = question.lower()
     # Customers get dates, package prices, and their own booking details. Keep
-    # owner analytics (averages, totals, rankings, comparisons) off this path;
-    # the explicitly supported confirmed-status count remains customer-safe.
-    status_count = bool(re.search(r"how many .*booking(?:s)? .*\b(confirmed|tentative|completed)\b", lowered))
+    # owner analytics and workspace-wide schedule/schema questions off this path.
     owner_analytics = (
         "average" in lowered or "most common" in lowered or "most bookings" in lowered
         or "which city has" in lowered or "compare" in lowered or "versus" in lowered
-        or "total" in lowered
+        or "total" in lowered or "how many" in lowered or "upcoming" in lowered
+        or "future" in lowered or "schedule" in lowered or "what data" in lowered
+        or "what does this data" in lowered or "what does the data" in lowered
     )
-    if not re.search(r"\bSS-\d+\b", question, re.IGNORECASE) and owner_analytics and not status_count:
+    if not re.search(r"\bSS-\d+\b", question, re.IGNORECASE) and owner_analytics:
         return {"answer": "I can help with a date, package, price, availability, or a specific booking. Owner analytics are available in the owner desk.", "escalated": False, "synthesis": "deterministic"}
     return answer_with_optional_synthesis(question, rows, conversation_id)
 
