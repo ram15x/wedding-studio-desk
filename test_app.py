@@ -222,6 +222,9 @@ class AssignmentDeskTests(unittest.TestCase):
         wedding_day = app.grounded_answer("What is the price for Wedding Day?", app.load_bookings())
         self.assertFalse(wedding_day["escalated"])
         self.assertIn("₹120,000", wedding_day["answer"])
+        natural = app.grounded_answer("What is the Wedding Day price?", app.load_bookings())
+        self.assertFalse(natural["escalated"])
+        self.assertIn("₹120,000", natural["answer"])
 
     def test_generic_numeric_total_and_future_schedule_questions(self):
         total = app.grounded_answer("What is the total advance paid?", app.load_bookings())

@@ -518,7 +518,14 @@ def grounded_answer(question: str, rows: list[dict[str, str]], conversation_id: 
         if packages:
             return {"answer": "The current booking sheet lists these packages: " + ", ".join(packages) + ". Ask me about the price of any one.", "escalated": False}
 
-    if not any(term in q for term in ("compare", "versus", " vs ")) and any(term in q for term in ("how much is", "price of", "price for", "package price", " cost", "cost of")):
+    # Accept natural package-price phrasing such as "What is the Wedding Day
+    # price?". The package name is still matched against uploaded rows.
+    package_price_question = (
+        any(term in q for term in ("how much is", "price of", "price for", "package price", " cost", "cost of"))
+        or ("price" in q and any(row.get("package", "").strip().lower() in q for row in rows if row.get("package", "").strip()))
+        or ("cost" in q and any(row.get("package", "").strip().lower() in q for row in rows if row.get("package", "").strip()))
+    )
+    if not any(term in q for term in ("compare", "versus", " vs ")) and package_price_question:
         package = next((row.get("package") for row in rows if row.get("package") and row.get("package", "").lower() in q), None)
         if package:
             values = {row.get("package_price") for row in rows if row.get("package", "").lower() == package.lower() and row.get("package_price")}
