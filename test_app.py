@@ -117,6 +117,18 @@ class AssignmentDeskTests(unittest.TestCase):
         columns = {row[1] for row in connection.execute("PRAGMA table_info(escalations)")}
         connection.close()
         self.assertTrue({"conversation_id", "reply", "reply_created_at"}.issubset(columns))
+
+    def test_repeated_open_escalation_is_idempotent(self):
+        app.escalate("Why did bookings decline?", "The sheet cannot establish causes.", "same-session")
+        app.escalate("Why did bookings decline?", "The sheet cannot establish causes.", "same-session")
+        connection = app.db()
+        count = connection.execute(
+            "SELECT COUNT(*) FROM escalations WHERE question = ? AND conversation_id = ? AND status = 'open'",
+            ("Why did bookings decline?", "same-session"),
+        ).fetchone()[0]
+        connection.close()
+        self.assertEqual(count, 1)
+
     def test_unsupported_customer_question_escalates_without_column_dump(self):
         result = app.customer_answer("Tell me about the album workflow", app.load_bookings())
         self.assertTrue(result["escalated"])

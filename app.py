@@ -619,7 +619,12 @@ def escalate(question: str, reason: str, conversation_id: str = "") -> dict:
     now = datetime.now(timezone.utc).isoformat()
     with DB_LOCK:
         conn = db()
-        conn.execute("INSERT INTO escalations(question, reason, created_at, conversation_id) VALUES (?, ?, ?, ?)", (question, reason, now, conversation_id))
+        existing = conn.execute(
+            "SELECT id FROM escalations WHERE question = ? AND conversation_id = ? AND status = 'open' LIMIT 1",
+            (question, conversation_id),
+        ).fetchone()
+        if not existing:
+            conn.execute("INSERT INTO escalations(question, reason, created_at, conversation_id) VALUES (?, ?, ?, ?)", (question, reason, now, conversation_id))
         conn.commit(); conn.close()
     return {"answer": "I don't have enough evidence in the booking sheet to answer that safely. I sent this question to the studio owner for review.", "reason": reason, "escalated": True}
 
@@ -747,7 +752,25 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_text(brief_markdown(load_bookings()), 'text/markdown; charset=utf-8')
         if path == '/api/owner/inbox':
             if not require_owner(self): return
-            conn=db(); items=[dict(x) for x in conn.execute('SELECT * FROM escalations WHERE status = "open" ORDER BY id DESC')]; conn.close(); return self.send_json({'items':items})
+            conn = db()
+            items = [
+                dict(row)
+                for row in conn.execute(
+                    """SELECT e.*
+                       FROM escalations e
+                       WHERE e.status = 'open'
+                         AND e.id = (
+                             SELECT MAX(e2.id)
+                             FROM escalations e2
+                             WHERE e2.status = 'open'
+                               AND e2.question = e.question
+                               AND e2.conversation_id = e.conversation_id
+                         )
+                       ORDER BY e.id DESC"""
+                )
+            ]
+            conn.close()
+            return self.send_json({'items': items})
         if path == '/api/owner/holds':
             if not require_owner(self): return
             conn=db(); items=[dict(x) for x in conn.execute("SELECT * FROM holds WHERE expires_at > ? AND status = 'active' ORDER BY event_date", (datetime.now(timezone.utc).isoformat(),))]; conn.close(); return self.send_json({'items':items})
