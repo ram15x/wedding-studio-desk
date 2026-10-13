@@ -154,7 +154,7 @@ The local SQLite file `assignment.db` and Python caches are intentionally ignore
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/ram15x/wedding-studio-desk)
 
-Create a new Render Web Service from this repository and choose **Blueprint**; Render will read `render.yaml`. Set `OWNER_PASSWORD` and `OPENROUTER_API_KEY` as secret environment values in Render. Do not commit either value. The service uses the supplied CSV and the standard-library Python server, so no Docker or paid dependency is required.
+Create a new Render Web Service from this repository and choose **Blueprint**; Render will read `render.yaml`. Set `OWNER_PASSWORD` and `OPENROUTER_API_KEYS` as secret environment values in Render. Do not commit either value. The service uses the supplied CSV and the standard-library Python server, so no Docker or paid dependency is required. `OPENROUTER_MODELS` defaults to the free Gemma route; provider failures still fall back to deterministic answers.
 
 This free deployment is a review/demo environment: its local filesystem is ephemeral, so uploaded replacement files, holds, and owner replies can be lost when the service restarts. A production deployment needs durable storage and real customer authentication.
 
