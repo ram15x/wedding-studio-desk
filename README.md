@@ -150,11 +150,39 @@ The suite covers natural customer phrasing, privacy boundaries, grounded calcula
 
 The local SQLite file `assignment.db` and Python caches are intentionally ignored by Git.
 
-## Free Render deployment
+## Railway deployment
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/ram15x/wedding-studio-desk)
+The current hosted demo runs on Railway:
 
-Create a new Render Web Service from this repository and choose **Blueprint**; Render will read `render.yaml`. Set `OWNER_PASSWORD` and `OPENROUTER_API_KEYS` as secret environment values in Render. Do not commit either value. The service uses the supplied CSV and the standard-library Python server, so no Docker or paid dependency is required. `OPENROUTER_MODELS` defaults to the free Gemma route; provider failures still fall back to deterministic answers.
+- Customer chat: https://wedding-studio-desk-production.up.railway.app/
+- Owner desk: https://wedding-studio-desk-production.up.railway.app/owner
+- Source repository: https://github.com/ram15x/wedding-studio-desk
+- Branch: `main`
 
-This free deployment is a review/demo environment: its local filesystem is ephemeral, so uploaded replacement files, holds, and owner replies can be lost when the service restarts. A production deployment needs durable storage and real customer authentication.
+The service runs the standard-library Python server with:
 
+```text
+ASSIGNMENT_HOST=0.0.0.0
+ASSIGNMENT_PORT=8787
+```
+
+Set these variables privately in Railway before deploying:
+
+```text
+OWNER_PASSWORD=<private owner password>
+OPENROUTER_API_KEYS=<private comma-separated keys>
+OPENROUTER_MODELS=google/gemma-4-31b-it:free
+```
+
+Never commit secret values. OpenRouter is optional; deterministic CSV answers remain the safety fallback when the provider is unavailable or rate-limited.
+
+Railway's free trial/free allowance is suitable for a review demo, but it is not a production storage guarantee. The SQLite database, uploaded replacements, holds, and owner replies are stored on ephemeral service storage and may be lost after a redeploy or service reset. A production deployment needs durable storage, customer authentication, backups, and a paid or otherwise persistent hosting plan.
+
+The local tunnel command remains useful for a temporary local review only:
+
+```powershell
+py -3 app.py
+npx localtunnel --port 8787
+```
+
+The laptop and process must remain running while that tunnel is in use.
