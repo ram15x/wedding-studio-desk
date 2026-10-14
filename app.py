@@ -386,6 +386,14 @@ def customer_answer(question: str, rows: list[dict[str, str]], conversation_id: 
     return answer_with_optional_synthesis(question, rows, conversation_id)
 
 
+def owner_answer(question: str, rows: list[dict[str, str]]) -> dict:
+    """Return an owner-facing, grounded answer with natural escalation wording."""
+    result = answer_with_optional_synthesis(question, rows)
+    if result.get("escalated"):
+        result["answer"] = "The uploaded booking sheet does not contain enough evidence to establish that. Additional business context or an owner decision is needed."
+    return result
+
+
 def dataset_dashboard(rows: list[dict[str, str]]) -> dict:
     """Return deterministic, source-grounded metrics for the dashboard/report."""
     columns = list(rows[0].keys()) if rows else []
@@ -623,6 +631,9 @@ def grounded_answer(question: str, rows: list[dict[str, str]], conversation_id: 
                 requested = package
                 break
         if requested:
+            prices = {row.get("package_price") for row in rows if row.get("package", "").strip().lower() == requested.lower() and row.get("package_price")}
+            if len(prices) == 1:
+                return {"answer": f"Yes, we offer {requested}. It is listed at {display_number('package_price', float(next(iter(prices))))} in the current booking sheet.", "escalated": False}
             return {"answer": f"Yes, {requested} appears in the current booking sheet. Ask me for its recorded price if you would like to check it.", "escalated": False}
         if packages:
             return {"answer": "The current booking sheet lists these packages: " + ", ".join(packages) + ". Ask me about the price of any one.", "escalated": False}
@@ -650,6 +661,21 @@ def grounded_answer(question: str, rows: list[dict[str, str]], conversation_id: 
             values = _numeric_values(rows, field)
             if values:
                 return {"answer": f"The recorded {field.replace('_', ' ')} values range from {display_number(field, min(values))} to {display_number(field, max(values))}. Please specify the package.", "escalated": False}
+    if any(phrase in q for phrase in ("most expensive package", "highest package price", "costliest package", "cheapest package", "lowest package price")):
+        package_prices = {}
+        for row in rows:
+            package, raw_price = row.get("package", "").strip(), row.get("package_price", "").strip()
+            if package and raw_price:
+                try:
+                    package_prices.setdefault(package, []).append(float(raw_price))
+                except ValueError:
+                    continue
+        if package_prices:
+            highest = any(phrase in q for phrase in ("most expensive", "highest", "costliest"))
+            package, values = (max if highest else min)(package_prices.items(), key=lambda item: max(item[1]) if highest else min(item[1]))
+            price = max(values) if highest else min(values)
+            label = "highest-priced" if highest else "lowest-priced"
+            return {"answer": f"The {label} package in the uploaded rows is {package}, listed at {display_number('package_price', price)}.", "escalated": False}
     if any(phrase in q for phrase in ("most common", "most bookings", "most records", "highest number", "largest", "top")):
         field = _field_match(q, columns, ("event_type", "package", "city", "status", "album_stage"))
         if not field:
@@ -936,7 +962,7 @@ class Handler(BaseHTTPRequestHandler):
             question = str(data.get('question', '')).strip()[:2000]
             if not question:
                 return self.send_json({'error': 'Question is required.'}, 400)
-            result = grounded_answer(question, load_bookings())
+            result = owner_answer(question, load_bookings())
             return self.send_json(result)
         if path == '/api/owner/reply':
             if not require_owner(self): return

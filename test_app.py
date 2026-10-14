@@ -417,6 +417,21 @@ class AssignmentDeskTests(unittest.TestCase):
                 self.assertFalse(result["escalated"])
                 self.assertIn(expected, result["answer"])
 
+    def test_service_and_package_extremes_use_recorded_prices(self):
+        rows = app.load_bookings()
+        service = app.customer_answer("Do you do maternity shoots?", rows)
+        self.assertFalse(service["escalated"])
+        self.assertIn("Maternity Shoot", service["answer"])
+        self.assertIn("₹", service["answer"])
+        highest = app.owner_answer("What is the most expensive package?", rows)
+        self.assertFalse(highest["escalated"])
+        self.assertIn("highest-priced", highest["answer"])
+
+    def test_owner_unsupported_question_is_natural_and_grounded(self):
+        result = app.owner_answer("Why did bookings decline?", app.load_bookings())
+        self.assertTrue(result["escalated"])
+        self.assertIn("does not contain enough evidence", result["answer"])
+
     def test_month_first_and_ambiguous_dates_are_handled(self):
         rows = app.load_bookings()
         result = app.customer_answer("Is December 20 booked?", rows)
