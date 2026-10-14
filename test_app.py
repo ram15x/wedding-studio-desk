@@ -407,6 +407,7 @@ class AssignmentDeskTests(unittest.TestCase):
         rows = app.load_bookings()
         cases = {
             "How much do you charge for pre-wedding photography?": "45,000",
+            "What do you charge for pre-wedding photos?": "45,000",
             "What’s the cost for the full wedding package?": "185,000",
             "Can I book the 20th of December?": "20 December 2026",
         }

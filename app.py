@@ -633,6 +633,7 @@ def grounded_answer(question: str, rows: list[dict[str, str]], conversation_id: 
         any(term in q for term in ("how much is", "how much do you", "price of", "price for", "package price", " cost", "cost of", "kitne ka", "kitne ki", "ka rate", "ki rate", "rate of", "rate for"))
         or ("price" in q and any(_package_match(row.get("package", ""), q) for row in rows if row.get("package", "").strip()))
         or ("cost" in q and any(_package_match(row.get("package", ""), q) for row in rows if row.get("package", "").strip()))
+        or ("charge" in q and any(_package_match(row.get("package", ""), q) for row in rows if row.get("package", "").strip()))
         or ("rate" in q and any(_package_match(row.get("package", ""), q) for row in rows if row.get("package", "").strip()))
     )
     if not any(term in q for term in ("compare", "versus", " vs ")) and package_price_question:
