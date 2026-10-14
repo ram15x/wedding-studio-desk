@@ -173,11 +173,13 @@ OWNER_PASSWORD=<private owner password>
 OPENROUTER_API_KEYS=<private comma-separated keys>
 OPENROUTER_MODELS=google/gemma-4-31b-it:free
 OPENROUTER_ALLOW_GROUNDED_DATA=1
+# Set this only when a durable Railway volume is mounted at /data:
+# ASSIGNMENT_DB_PATH=/data/assignment.db
 ```
 
 Never commit secret values. OpenRouter is optional; deterministic CSV answers remain the safety fallback when the provider is unavailable or rate-limited.
 
-Railway's free trial/free allowance is suitable for a review demo, but it is not a production storage guarantee. The SQLite database, uploaded replacements, holds, and owner replies are stored on ephemeral service storage and may be lost after a redeploy or service reset. A production deployment needs durable storage, customer authentication, backups, and a paid or otherwise persistent hosting plan.
+Railway's free trial/free allowance is suitable for a review demo, but it is not a production storage guarantee. The SQLite database, uploaded replacements, holds, and owner replies are stored on ephemeral service storage and may be lost after a redeploy or service reset. To preserve holds across deploys, mount a durable volume at `/data` and set `ASSIGNMENT_DB_PATH=/data/assignment.db`; otherwise treat holds as demo-only. A production deployment needs durable storage, customer authentication, backups, and a paid or otherwise persistent hosting plan.
 
 The local tunnel command remains useful for a temporary local review only:
 

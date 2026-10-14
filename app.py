@@ -52,7 +52,7 @@ def _load_local_env() -> None:
 _load_local_env()
 CSV_PATH = Path(os.environ.get("ASSIGNMENT_CSV", ROOT / "data" / "studio_bookings.csv"))
 SOURCE_DISPLAY_NAME = CSV_PATH.name
-DB_PATH = ROOT / "assignment.db"
+DB_PATH = Path(os.environ.get("ASSIGNMENT_DB_PATH", ROOT / "assignment.db"))
 PORT = int(os.environ.get("ASSIGNMENT_PORT", "8787"))
 HOST = os.environ.get("ASSIGNMENT_HOST", "127.0.0.1")
 DB_LOCK = threading.Lock()
@@ -178,7 +178,17 @@ def db() -> sqlite3.Connection:
 
 
 def money(value: str) -> str:
-    return f"₹{float(value):,.0f}"
+    amount = int(round(float(value)))
+    sign = "-" if amount < 0 else ""
+    digits = str(abs(amount))
+    if len(digits) > 3:
+        tail, head = digits[-3:], digits[:-3]
+        groups = []
+        while head:
+            groups.insert(0, head[-2:])
+            head = head[:-2]
+        digits = ",".join(groups + [tail])
+    return f"{sign}₹{digits}"
 
 
 def display_number(field: str, value: float) -> str:
@@ -607,7 +617,8 @@ def grounded_answer(question: str, rows: list[dict[str, str]], conversation_id: 
         if "balance" in q or "amount due" in q:
             return {"answer": f"Booking {booking_id} has a balance of {display_number('balance_due', float(row.get('balance_due', 0)))} due.", "escalated": False}
         if "album" in q:
-            return {"answer": f"Booking {booking_id}'s album is currently at: {row.get('album_stage', 'not available').replace('_', ' ')}.", "escalated": False}
+            stage = row.get('album_stage', 'not available').replace('_', ' ')
+            return {"answer": f"Your album is {stage} for booking {booking_id}.", "escalated": False}
         if "city" in q or "location" in q:
             return {"answer": f"Booking {booking_id} is listed in {row.get('city', 'an unknown city')}.", "escalated": False}
         if "customer" in q or "name" in q:
@@ -618,10 +629,10 @@ def grounded_answer(question: str, rows: list[dict[str, str]], conversation_id: 
             price = display_number('package_price', float(row.get('package_price', 0))) if row.get('package_price') else 'not available'
             return {"answer": f"Booking {booking_id} is for the {package_label}, listed at {price}.", "escalated": False}
         if "date" in q or "when" in q:
-            return {"answer": f"Booking {booking_id} is scheduled for {row.get('event_date', 'an unknown date')}.", "escalated": False}
+            return {"answer": f"Booking {booking_id} is scheduled for {_display_date(row.get('event_date', 'an unknown date'))}.", "escalated": False}
         if "status" in q or "booking" in q:
-            return {"answer": f"Booking {booking_id} is {row.get('status', 'not available')}. It is scheduled for {row.get('event_date', 'an unknown date')}.", "escalated": False}
-        return {"answer": f"Booking {booking_id} is for a {row.get('event_type', 'recorded event')} on {row.get('event_date', 'an unknown date')}.", "escalated": False}
+            return {"answer": f"Booking {booking_id} is {row.get('status', 'not available')}. It is scheduled for {_display_date(row.get('event_date', 'an unknown date'))}.", "escalated": False}
+        return {"answer": f"Booking {booking_id} is for a {row.get('event_type', 'recorded event')} on {_display_date(row.get('event_date', 'an unknown date'))}.", "escalated": False}
     if booking_id is None and ("package" in q or "service" in q or "photograph" in q or "shoot" in q) and any(term in q for term in ("offer", "have", "available", "listed", "options", "provide", "do you")) and not any(term in q for term in ("price", "cost", "rate", "charge", "how much")):
         packages = sorted({row.get("package", "").strip() for row in rows if row.get("package", "").strip()})
         requested = None
@@ -767,7 +778,7 @@ def escalate(question: str, reason: str, conversation_id: str = "") -> dict:
         if not existing:
             conn.execute("INSERT INTO escalations(question, reason, created_at, conversation_id) VALUES (?, ?, ?, ?)", (question, reason, now, conversation_id))
         conn.commit(); conn.close()
-    return {"answer": "I don't have enough evidence in the booking sheet to answer that safely. I sent this question to the studio owner for review.", "reason": reason, "escalated": True}
+    return {"answer": "I don't have that information in the current booking sheet, so I’ve sent it to the studio owner to review.", "reason": reason, "escalated": True}
 
 
 def create_hold(event_date: str, customer_name: str, customer_phone: str = "") -> dict:

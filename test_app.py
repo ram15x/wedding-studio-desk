@@ -41,7 +41,7 @@ class AssignmentDeskTests(unittest.TestCase):
         rows = app.load_bookings()
         cases = [
             ("is 14 december booked", "not available"),
-            ("how much is full package", "185,000"),
+            ("how much is full package", "₹1,85,000"),
             ("my balance for SS-2043", "80,000"),
             ("where is my album SS-2043", "not started"),
             ("what is the status of SS-2043", "tentative"),
@@ -74,21 +74,21 @@ class AssignmentDeskTests(unittest.TestCase):
             ("is 2026-11-22 available", "not available"),
             ("can I book 20 December 2026", "looks free"),
             ("hold 20 December 2026", "looks free"),
-            ("how much is full package", "185,000"),
-            ("what does wedding day cost", "120,000"),
+            ("how much is full package", "₹1,85,000"),
+            ("what does wedding day cost", "₹1,20,000"),
             ("what is my balance for SS-2043", "80,000"),
             ("where is my album SS-2043", "not started"),
             ("what is the status of SS-2043", "tentative"),
             ("what city is SS-2043 in", "Delhi"),
             ("what package do I have SS-2043", "Wedding Day"),
-            ("what date is SS-2048", "2027-01-17"),
+            ("what date is SS-2048", "17 january 2027"),
             ("what is the event for SS-2031", "wedding"),
             ("what is the customer name for SS-2043", "Ananya Gupta"),
             ("which city has the most bookings", "Owner analytics"),
             ("how many bookings are confirmed", "Owner analytics"),
             ("what is my balance", "Please share your booking ID"),
-            ("will bookings increase next month", "owner for review"),
-            ("can I get a refund", "owner for review"),
+            ("will bookings increase next month", "studio owner to review"),
+            ("can I get a refund", "studio owner to review"),
             ("what services do you offer", "Full Package"),
         ]
         for question, expected in cases:
@@ -236,10 +236,10 @@ class AssignmentDeskTests(unittest.TestCase):
         self.assertNotIn("Full Package package", result["answer"])
         wedding_day = app.grounded_answer("What is the price for Wedding Day?", app.load_bookings())
         self.assertFalse(wedding_day["escalated"])
-        self.assertIn("₹120,000", wedding_day["answer"])
+        self.assertIn("₹1,20,000", wedding_day["answer"])
         natural = app.grounded_answer("What is the Wedding Day price?", app.load_bookings())
         self.assertFalse(natural["escalated"])
-        self.assertIn("₹120,000", natural["answer"])
+        self.assertIn("₹1,20,000", natural["answer"])
 
     def test_generic_numeric_total_and_future_schedule_questions(self):
         total = app.grounded_answer("What is the total advance paid?", app.load_bookings())
@@ -397,7 +397,7 @@ class AssignmentDeskTests(unittest.TestCase):
 
     def test_natural_language_package_prices(self):
         rows = app.load_bookings()
-        for question, expected in (("full package kitne ka hai", "185,000"), ("pre wedding shoot price", "45,000"), ("haldi mehndi ka rate", "55,000")):
+        for question, expected in (("full package kitne ka hai", "₹1,85,000"), ("pre wedding shoot price", "45,000"), ("haldi mehndi ka rate", "55,000")):
             with self.subTest(question=question):
                 result = app.grounded_answer(question, rows)
                 self.assertFalse(result["escalated"])
@@ -408,7 +408,7 @@ class AssignmentDeskTests(unittest.TestCase):
         cases = {
             "How much do you charge for pre-wedding photography?": "45,000",
             "What do you charge for pre-wedding photos?": "45,000",
-            "What’s the cost for the full wedding package?": "185,000",
+            "What’s the cost for the full wedding package?": "₹1,85,000",
             "Can I book the 20th of December?": "20 December 2026",
         }
         for question, expected in cases.items():
@@ -426,6 +426,20 @@ class AssignmentDeskTests(unittest.TestCase):
         highest = app.owner_answer("What is the most expensive package?", rows)
         self.assertFalse(highest["escalated"])
         self.assertIn("highest-priced", highest["answer"])
+
+    def test_customer_copy_uses_human_currency_dates_and_album_language(self):
+        rows = app.load_bookings()
+        price = app.customer_answer("What is the package price for SS-2043?", rows)
+        self.assertIn("₹1,20,000", price["answer"])
+        date = app.customer_answer("When is SS-2031?", rows)
+        self.assertIn("22 November 2026", date["answer"])
+        album = app.customer_answer("Where is my album SS-2043?", rows)
+        self.assertIn("Your album is", album["answer"])
+
+    def test_escalation_copy_is_human(self):
+        result = app.customer_answer("Can you guarantee my date?", app.load_bookings())
+        self.assertTrue(result["escalated"])
+        self.assertIn("sent it to the studio owner", result["answer"])
 
     def test_owner_unsupported_question_is_natural_and_grounded(self):
         result = app.owner_answer("Why did bookings decline?", app.load_bookings())
