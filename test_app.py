@@ -401,6 +401,24 @@ class AssignmentDeskTests(unittest.TestCase):
                 self.assertFalse(result["escalated"])
                 self.assertIn(expected, result["answer"])
 
+    def test_customer_natural_variants_are_not_escalated(self):
+        rows = app.load_bookings()
+        cases = {
+            "How much do you charge for pre-wedding photography?": "45,000",
+            "What’s the cost for the full wedding package?": "185,000",
+            "Can I book the 20th of December?": "20 December 2026",
+        }
+        for question, expected in cases.items():
+            with self.subTest(question=question):
+                result = app.customer_answer(question, rows)
+                self.assertFalse(result["escalated"])
+                self.assertIn(expected, result["answer"])
+
+    def test_generic_booking_question_requests_id(self):
+        result = app.customer_answer("Can you tell me about this booking?", app.load_bookings())
+        self.assertFalse(result["escalated"])
+        self.assertIn("booking ID", result["answer"])
+
     def test_greeting_is_not_escalated(self):
         for question in ("hi", "hi, how u doing", "hello there"):
             with self.subTest(question=question):

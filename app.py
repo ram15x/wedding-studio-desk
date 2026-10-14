@@ -463,7 +463,11 @@ def _question_date(question: str, rows: list[dict[str, str]]) -> str | None:
     if explicit:
         parts = explicit.group(0).split("-")
         return f"{int(parts[0]):04d}-{int(parts[1]):02d}-{int(parts[2]):02d}"
-    match = re.search(r"\b(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]+)\b", question.lower())
+    match = re.search(r"\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?([a-z]+)\b", question.lower())
+    if not match:
+        month_first = re.search(r"\b([a-z]+)\s+(\d{1,2})(?:st|nd|rd|th)?\b", question.lower())
+        if month_first:
+            match = re.match(r"(\d{1,2})\s+([a-z]+)", f"{month_first.group(2)} {month_first.group(1)}")
     if not match:
         return None
     month = _MONTHS.get(match.group(2))
@@ -514,7 +518,12 @@ def _active_hold(event_date: str) -> bool:
 def _package_match(package: str, question: str) -> bool:
     normalized_package = re.sub(r"[^a-z0-9]+", "", package.lower())
     normalized_question = re.sub(r"[^a-z0-9]+", "", question.lower())
-    return bool(normalized_package and normalized_package in normalized_question)
+    if normalized_package and normalized_package in normalized_question:
+        return True
+    aliases = {"photography": "shoot", "photos": "shoot", "photo": "shoot", "pics": "shoot"}
+    package_tokens = [aliases.get(token, token) for token in re.findall(r"[a-z0-9]+", package.lower()) if token not in {"package", "only", "and"}]
+    question_tokens = {aliases.get(token, token) for token in re.findall(r"[a-z0-9]+", question.lower())}
+    return bool(package_tokens and all(token in question_tokens for token in package_tokens))
 
 
 def build_operating_brief(rows: list[dict[str, str]]) -> dict:
@@ -575,6 +584,8 @@ def grounded_answer(question: str, rows: list[dict[str, str]], conversation_id: 
     booking_match = re.search(r"\bSS-\d+\b", question, re.IGNORECASE)
     booking_id = booking_match.group(0).upper() if booking_match else None
     personal = (booking_id is not None and any(term in q for term in ("balance", "album", "status", "booking", "package", "event", "city", "location", "customer", "name", "date", "when", "price", "cost"))) or any(term in q for term in ("my balance", "my album", "my booking", "my status", "my package", "my event", "my city", "my location", "where is my", "what city am i", "what is my"))
+    if booking_id is None and re.search(r"\b(?:my|this|the)\s+booking\b|\bbooking\s+(?:details|information|info|status)\b", q):
+        return {"answer": "Please share your booking ID (for example, SS-2043) so I can look up the right booking securely.", "escalated": False}
     if personal:
         if not booking_id:
             return {"answer": "Please share your booking ID (for example, SS-2043) so I can look up your booking securely.", "escalated": False}
@@ -599,7 +610,7 @@ def grounded_answer(question: str, rows: list[dict[str, str]], conversation_id: 
         if "status" in q or "booking" in q:
             return {"answer": f"Booking {booking_id} is {row.get('status', 'not available')}. It is scheduled for {row.get('event_date', 'an unknown date')}.", "escalated": False}
         return {"answer": f"Booking {booking_id} is for a {row.get('event_type', 'recorded event')} on {row.get('event_date', 'an unknown date')}.", "escalated": False}
-    if booking_id is None and ("package" in q or "service" in q or "photograph" in q or "shoot" in q) and any(term in q for term in ("offer", "have", "available", "listed", "options", "provide", "do you")):
+    if booking_id is None and ("package" in q or "service" in q or "photograph" in q or "shoot" in q) and any(term in q for term in ("offer", "have", "available", "listed", "options", "provide", "do you")) and not any(term in q for term in ("price", "cost", "rate", "charge", "how much")):
         packages = sorted({row.get("package", "").strip() for row in rows if row.get("package", "").strip()})
         requested = None
         for package in packages:
@@ -615,7 +626,7 @@ def grounded_answer(question: str, rows: list[dict[str, str]], conversation_id: 
     # Accept natural package-price phrasing such as "What is the Wedding Day
     # price?". The package name is still matched against uploaded rows.
     package_price_question = (
-        any(term in q for term in ("how much is", "price of", "price for", "package price", " cost", "cost of", "kitne ka", "kitne ki", "ka rate", "ki rate", "rate of", "rate for"))
+        any(term in q for term in ("how much is", "how much do you", "price of", "price for", "package price", " cost", "cost of", "kitne ka", "kitne ki", "ka rate", "ki rate", "rate of", "rate for"))
         or ("price" in q and any(_package_match(row.get("package", ""), q) for row in rows if row.get("package", "").strip()))
         or ("cost" in q and any(_package_match(row.get("package", ""), q) for row in rows if row.get("package", "").strip()))
         or ("rate" in q and any(_package_match(row.get("package", ""), q) for row in rows if row.get("package", "").strip()))
