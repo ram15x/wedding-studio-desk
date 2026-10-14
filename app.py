@@ -432,15 +432,50 @@ def _question_date(question: str, rows: list[dict[str, str]]) -> str | None:
         return None
     day = int(match.group(1))
     candidates = sorted({row.get("event_date", "") for row in rows if row.get("event_date", "").endswith(f"-{month:02d}-{day:02d}")})
-    if len(candidates) == 1:
-        return candidates[0]
     year = re.search(r"\b(20\d{2})\b", question.lower())
     if year:
         try:
             return datetime(int(year.group(1)), month, day).date().isoformat()
         except ValueError:
             return None
-    return None
+    today = datetime.now(timezone.utc).date()
+    upcoming = [candidate for candidate in candidates if candidate >= today.isoformat()]
+    if upcoming:
+        return upcoming[0]
+    # A day/month query with no matching row still needs a concrete upcoming
+    # occurrence so availability can be answered instead of escalated.
+    try:
+        candidate = datetime(today.year, month, day).date()
+        if candidate < today:
+            candidate = datetime(today.year + 1, month, day).date()
+        return candidate.isoformat()
+    except ValueError:
+        return None
+
+
+def _display_date(value: str) -> str:
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").strftime("%d %B %Y").lstrip("0")
+    except (TypeError, ValueError):
+        return value
+
+
+def _active_hold(event_date: str) -> bool:
+    if not event_date:
+        return False
+    conn = db()
+    row = conn.execute(
+        "SELECT 1 FROM holds WHERE event_date = ? AND status = 'active' AND expires_at > ? LIMIT 1",
+        (event_date, datetime.now(timezone.utc).isoformat()),
+    ).fetchone()
+    conn.close()
+    return bool(row)
+
+
+def _package_match(package: str, question: str) -> bool:
+    normalized_package = re.sub(r"[^a-z0-9]+", "", package.lower())
+    normalized_question = re.sub(r"[^a-z0-9]+", "", question.lower())
+    return bool(normalized_package and normalized_package in normalized_question)
 
 
 def build_operating_brief(rows: list[dict[str, str]]) -> dict:
@@ -483,6 +518,8 @@ def grounded_answer(question: str, rows: list[dict[str, str]], conversation_id: 
     columns = list(rows[0].keys()) if rows else []
     if not q:
         return {"answer": "Ask a question about bookings, dates, packages, prices, status, or album stage.", "escalated": False}
+    if re.fullmatch(r"(?:hi|hello|hey|hii|namaste|good morning|good afternoon|good evening)[!. ]*", q):
+        return {"answer": "Hi! How can I help with your date, package, price, or booking?", "escalated": False}
     if any(word in q for word in ("why", "cause", "reason", "should we", "recommend", "forecast", "will bookings", "bookings increase", "bookings decrease", "bookings decline")):
         return escalate(question, "The CSV contains booking records but does not establish causes or business decisions.", conversation_id)
     if ("what does" in q or "represent" in q or "business" in q or "what data" in q or "what's in" in q or "whats in" in q) and not any(term in q for term in ("cost", "price", "package")):
@@ -520,7 +557,7 @@ def grounded_answer(question: str, rows: list[dict[str, str]], conversation_id: 
         requested = None
         for package in packages:
             tokens = [token for token in re.findall(r"[a-z0-9]+", package.lower()) if token not in {"package", "only", "and"}]
-            if tokens and any(token in q for token in tokens):
+            if _package_match(package, q) or (tokens and any(token in q for token in tokens)):
                 requested = package
                 break
         if requested:
@@ -531,12 +568,13 @@ def grounded_answer(question: str, rows: list[dict[str, str]], conversation_id: 
     # Accept natural package-price phrasing such as "What is the Wedding Day
     # price?". The package name is still matched against uploaded rows.
     package_price_question = (
-        any(term in q for term in ("how much is", "price of", "price for", "package price", " cost", "cost of"))
-        or ("price" in q and any(row.get("package", "").strip().lower() in q for row in rows if row.get("package", "").strip()))
-        or ("cost" in q and any(row.get("package", "").strip().lower() in q for row in rows if row.get("package", "").strip()))
+        any(term in q for term in ("how much is", "price of", "price for", "package price", " cost", "cost of", "kitne ka", "kitne ki", "ka rate", "ki rate", "rate of", "rate for"))
+        or ("price" in q and any(_package_match(row.get("package", ""), q) for row in rows if row.get("package", "").strip()))
+        or ("cost" in q and any(_package_match(row.get("package", ""), q) for row in rows if row.get("package", "").strip()))
+        or ("rate" in q and any(_package_match(row.get("package", ""), q) for row in rows if row.get("package", "").strip()))
     )
     if not any(term in q for term in ("compare", "versus", " vs ")) and package_price_question:
-        package = next((row.get("package") for row in rows if row.get("package") and row.get("package", "").lower() in q), None)
+        package = next((row.get("package") for row in rows if row.get("package") and _package_match(row.get("package", ""), q)), None)
         if package:
             values = {row.get("package_price") for row in rows if row.get("package", "").lower() == package.lower() and row.get("package_price")}
             if len(values) == 1:
@@ -615,7 +653,9 @@ def grounded_answer(question: str, rows: list[dict[str, str]], conversation_id: 
             details = ", ".join(f"{field.replace('_', ' ')}: {row.get(field, '')}" for field in ("event_type", "package", "city", "status", "album_stage") if row.get(field))
             return {"answer": f"That date is already booked, so it is not available for a new hold. I can't share another customer's booking details. If this is your booking, share your booking ID and I can check your details securely.\n\n{source_note()}", "escalated": False}
         if target:
-            return {"answer": f"That date looks free in the current booking sheet. If you'd like it, enter your name and phone below and I can hold it for 24 hours.", "escalated": False, "hold_offer": target}
+            if _active_hold(target):
+                return {"answer": f"{_display_date(target)} is currently on hold for another customer, so it is not available for a new hold yet.", "escalated": False}
+            return {"answer": f"{_display_date(target)} looks free in the current booking sheet. If you'd like it, I can hold it for 24 hours.", "escalated": False, "hold_offer": target}
     if "future" in q or "upcoming" in q or "schedule" in q:
         if date_field:
             today = datetime.now(timezone.utc).date().isoformat()
@@ -658,9 +698,9 @@ def create_hold(event_date: str, customer_name: str, customer_phone: str = "") -
 
 HTML = """<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Studio Desk</title><style>
 body{font-family:Inter,system-ui,sans-serif;background:#f5f7fb;margin:0;color:#172033}.wrap{max-width:980px;margin:0 auto;padding:28px}.brand{font-size:25px;font-weight:800}.muted{color:#68738a}.grid{display:grid;grid-template-columns:2fr 1fr;gap:20px;margin-top:20px}.card{background:white;border:1px solid #e1e6ef;border-radius:16px;padding:20px;box-shadow:0 5px 18px #1720330b}textarea,input,button{font:inherit}textarea,input{width:100%;box-sizing:border-box;border:1px solid #cad2df;border-radius:10px;padding:12px;margin:7px 0 12px}button{border:0;border-radius:10px;padding:11px 15px;background:#2463eb;color:#fff;font-weight:700;cursor:pointer}.secondary{background:#e9eef9;color:#24416f}.answer{white-space:pre-wrap;background:#f7f9fc;border-left:4px solid #2463eb;padding:14px;border-radius:8px;margin-top:16px}.badge{display:inline-block;border-radius:999px;padding:4px 9px;font-size:12px;background:#e8f7ed;color:#176b37}.warn{background:#fff4df;color:#805300}.item{padding:10px 0;border-bottom:1px solid #edf0f5}.small{font-size:13px}.chart-row{display:grid;grid-template-columns:150px 1fr 34px;gap:8px;align-items:center;font-size:13px;margin:6px 0}.bar{display:block;height:10px;border-radius:5px;background:#2463eb;min-width:4px}.chat{height:360px;overflow:auto;background:#e6edf5;border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:10px;margin:12px 0}.bubble{max-width:82%;padding:11px 13px;border-radius:14px;white-space:pre-wrap;line-height:1.45}.bubble.user{align-self:flex-end;background:#d9fdd3;border-bottom-right-radius:4px}.bubble.bot{align-self:flex-start;background:#fff;border-bottom-left-radius:4px;box-shadow:0 1px 2px #17203318}.bubble.flag{border-left:4px solid #d28b00;background:#fff7e6}.empty{margin:auto;color:#68738a;text-align:center}@media(max-width:700px){.grid{grid-template-columns:1fr}}
-</style></head><body><main class='wrap'><div class='brand'>Studio Desk <span class='badge'>Your Business AI</span></div><p class='muted'>A WhatsApp-style customer desk. Answers come only from the uploaded booking sheet.</p><div class='grid'><section class='card'><h2>Customer chat</h2><div id='chat' class='chat'><div class='empty'>Ask about dates, packages, prices, or booking status.</div></div><textarea id='q' rows='2' placeholder='Type a customer question...' onkeydown='if(event.key==="Enter"&&!event.shiftKey){event.preventDefault();ask()}'></textarea><button onclick='ask()'>Send</button><h3>Hold a date for 24 hours</h3><input id='date' type='date'><input id='name' placeholder='Customer name'><input id='phone' placeholder='Phone number'><button class='secondary' onclick='hold()'>Request hold</button><div id='holdResult'></div></section><aside class='card'><h2>Owner desk</h2><form id='uploadForm'><input id='csv' type='file' accept='.csv,text/csv' required><button type='submit' class='secondary'>Upload booking sheet</button></form><div id='uploadResult' class='small muted'></div><h3>Escalations</h3><p class='muted small'>Questions the sheet could not answer safely.</p><div id='inbox'>Loading…</div></aside></div><section class='card' id='dashboard'><h2>Operating picture</h2><p class='muted small'>Generated from the uploaded sheet; no outside facts are added.</p><div id='dashboardContent'>Loading...</div><p><a href='/api/report.md' target='_blank'>Download grounded operating brief</a></p></section></main><script>
+</style></head><body><main class='wrap'><div class='brand'>Studio Desk <span class='badge'>Your Business AI</span></div><p class='muted'>A WhatsApp-style customer desk. Answers come only from the uploaded booking sheet.</p><div class='grid'><section class='card'><h2>Customer chat</h2><div id='chat' class='chat'><div class='empty'>Ask about dates, packages, prices, or booking status.</div></div><textarea id='q' rows='2' placeholder='Type a customer question...' onkeydown='if(event.key==="Enter"&&!event.shiftKey){event.preventDefault();ask()}'></textarea><button onclick='ask()'>Send</button></section><aside class='card'><h2>Owner desk</h2><form id='uploadForm'><input id='csv' type='file' accept='.csv,text/csv' required><button type='submit' class='secondary'>Upload booking sheet</button></form><div id='uploadResult' class='small muted'></div><h3>Escalations</h3><p class='muted small'>Questions the sheet could not answer safely.</p><div id='inbox'>Loading…</div></aside></div><section class='card' id='dashboard'><h2>Operating picture</h2><p class='muted small'>Generated from the uploaded sheet; no outside facts are added.</p><div id='dashboardContent'>Loading...</div><p><a href='/api/report.md' target='_blank'>Download grounded operating brief</a></p></section></main><script>
 function loadDashboard(){fetch('/api/dashboard').then(r=>r.json()).then(d=>{let sections=Object.entries(d.charts||{}).map(([field,items])=>{let max=Math.max(...items.map(x=>x[1]),1);return '<h3>'+esc(field.replaceAll('_',' '))+'</h3>'+items.map(x=>'<div class="chart-row"><span>'+esc(x[0])+'</span><span class="bar" style="width:'+Math.max(4,Math.round(x[1]/max*100))+'%"></span><b>'+x[1]+'</b></div>').join('')}).join('');let nums=Object.entries(d.numeric||{}).map(([field,n])=>'<div class="item"><b>'+esc(field.replaceAll('_',' '))+'</b><div class="muted small">total '+Number(n.total).toLocaleString('en-IN')+' · average '+Number(n.average).toLocaleString('en-IN')+'</div></div>').join('');document.getElementById('dashboardContent').innerHTML='<p><b>'+d.rows+'</b> records across <b>'+d.columns.length+'</b> fields.</p>'+sections+'<h3>Visible numeric measures</h3>'+ (nums||'<p class="muted">No numeric measures detected.</p>')+'<h3>Schedule</h3><p>'+d.timeline.past_or_today+' past/today · '+d.timeline.future+' future-dated rows</p><p class="muted small">'+d.limitations.join(' ')+'</p>'}).catch(()=>{document.getElementById('dashboardContent').textContent='Dashboard unavailable.'})} function addMessage(role,text,flag){let chat=document.getElementById('chat');let empty=chat.querySelector('.empty');if(empty)empty.remove();let el=document.createElement('div');el.className='bubble '+role+(flag?' flag':'');el.textContent=text;chat.appendChild(el);chat.scrollTop=chat.scrollHeight}
-function addInlineHold(date){let chat=document.getElementById('chat');let wrap=document.createElement('div');wrap.className='inline-hold';wrap.innerHTML='<b>Want me to hold '+esc(date)+' for 24 hours?</b><input class="inline-name" placeholder="Your name"><input class="inline-phone" placeholder="Phone number"><button class="secondary">Request hold</button><div class="inline-result small"></div>';let button=wrap.querySelector('button');button.onclick=async()=>{let name=wrap.querySelector('.inline-name').value.trim(),phone=wrap.querySelector('.inline-phone').value.trim(),result=wrap.querySelector('.inline-result');let r=await fetch('/api/hold',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({event_date:date,customer_name:name,customer_phone:phone})});let d=await r.json();result.textContent=d.success?'Date held until '+d.expires_at:d.error;result.className='inline-result small '+(d.success?'':'warn');button.disabled=true};chat.appendChild(wrap);chat.scrollTop=chat.scrollHeight} let conversationId='';let lastReplyId=0;fetch('/api/session').then(r=>r.json()).then(d=>conversationId=d.conversation_id);async function loadReply(){if(!conversationId)return;let d=await (await fetch('/api/conversation?conversation_id='+encodeURIComponent(conversationId))).json();if(d.id&&d.id!==lastReplyId){lastReplyId=d.id;addMessage('bot','Owner: '+d.reply,false)}} async function ask(){let input=document.getElementById('q');let q=input.value.trim();if(!q)return;if(!conversationId)conversationId=(await (await fetch('/api/session')).json()).conversation_id;addMessage('user',q);input.value='';let r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,conversation_id:conversationId})});let d=await r.json();addMessage('bot',d.answer,Boolean(d.escalated));if(d.hold_offer)addInlineHold(d.hold_offer);if(d.escalated)addMessage('bot','Owner review requested.');loadReply()} async function hold(){let r=await fetch('/api/hold',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({event_date:document.getElementById('date').value,customer_name:document.getElementById('name').value,customer_phone:document.getElementById('phone').value})});let d=await r.json();document.getElementById('holdResult').innerHTML='<div class="answer">'+esc(d.success?'Date held until '+d.expires_at:d.error)+'</div>'} async function loadInbox(){let d=await (await fetch('/api/owner/inbox')).json();document.getElementById('inbox').innerHTML=d.items.length?d.items.map(x=>'<div class="item"><b>'+esc(x.question)+'</b><div class="muted small">'+esc(x.reason)+'</div></div>').join(''):'<p class="muted">No escalations yet.</p>'} document.getElementById('uploadForm').addEventListener('submit',async e=>{e.preventDefault();let f=document.getElementById('csv').files[0];let fd=new FormData();fd.append('file',f);let r=await fetch('/api/upload',{method:'POST',body:fd});let d=await r.json();document.getElementById('uploadResult').textContent=d.error||('Loaded '+d.rows+' rows from '+d.filename);loadDashboard()}); function esc(s){return String(s||'').replace(/[&<>\"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[m]))} loadInbox(); loadDashboard(); setInterval(loadReply,3000);
+function addInlineHold(date){let chat=document.getElementById('chat');let wrap=document.createElement('div');wrap.className='inline-hold';wrap.innerHTML='<b>Want me to hold '+esc(date)+' for 24 hours?</b><input class="inline-name" placeholder="Your name"><input class="inline-phone" placeholder="Phone number"><button class="secondary">Request hold</button><div class="inline-result small"></div>';let button=wrap.querySelector('button');button.onclick=async()=>{let name=wrap.querySelector('.inline-name').value.trim(),phone=wrap.querySelector('.inline-phone').value.trim(),result=wrap.querySelector('.inline-result');let r=await fetch('/api/hold',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({event_date:date,customer_name:name,customer_phone:phone})});let d=await r.json();result.textContent=d.success?'Your date is held for 24 hours.':d.error;result.className='inline-result small '+(d.success?'':'warn');button.disabled=true};chat.appendChild(wrap);chat.scrollTop=chat.scrollHeight} let conversationId='';let lastReplyId=0;fetch('/api/session').then(r=>r.json()).then(d=>conversationId=d.conversation_id);async function loadReply(){if(!conversationId)return;let d=await (await fetch('/api/conversation?conversation_id='+encodeURIComponent(conversationId))).json();if(d.id&&d.id!==lastReplyId){lastReplyId=d.id;addMessage('bot','Owner: '+d.reply,false)}} async function ask(){let input=document.getElementById('q');let q=input.value.trim();if(!q)return;if(!conversationId)conversationId=(await (await fetch('/api/session')).json()).conversation_id;addMessage('user',q);input.value='';let r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,conversation_id:conversationId})});let d=await r.json();addMessage('bot',d.answer,Boolean(d.escalated));if(d.hold_offer)addInlineHold(d.hold_offer);if(d.escalated)addMessage('bot','Owner review requested.');loadReply()} async function loadInbox(){let d=await (await fetch('/api/owner/inbox')).json();document.getElementById('inbox').innerHTML=d.items.length?d.items.map(x=>'<div class="item"><b>'+esc(x.question)+'</b><div class="muted small">'+esc(x.reason)+'</div></div>').join(''):'<p class="muted">No escalations yet.</p>'} document.getElementById('uploadForm').addEventListener('submit',async e=>{e.preventDefault();let f=document.getElementById('csv').files[0];let fd=new FormData();fd.append('file',f);let r=await fetch('/api/upload',{method:'POST',body:fd});let d=await r.json();document.getElementById('uploadResult').textContent=d.error||('Loaded '+d.rows+' rows from '+d.filename);loadDashboard()}); function esc(s){return String(s||'').replace(/[&<>\"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[m]))} loadInbox(); loadDashboard(); setInterval(loadReply,3000);
 </script></body></html>"""
 
 

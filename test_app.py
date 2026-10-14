@@ -45,7 +45,7 @@ class AssignmentDeskTests(unittest.TestCase):
             ("where is my album SS-2043", "not started"),
             ("what is the status of SS-2043", "tentative"),
             ("which city has the most bookings", "Delhi"),
-            ("how many bookings are confirmed", "Owner analytics"),
+            ("how many bookings are confirmed", "6 bookings"),
         ]
         for question, expected in cases:
             with self.subTest(question=question):
@@ -84,7 +84,7 @@ class AssignmentDeskTests(unittest.TestCase):
             ("what is the event for SS-2031", "wedding"),
             ("what is the customer name for SS-2043", "Ananya Gupta"),
             ("which city has the most bookings", "Owner analytics"),
-            ("how many bookings are confirmed", "6 bookings"),
+            ("how many bookings are confirmed", "Owner analytics"),
             ("what is my balance", "Please share your booking ID"),
             ("will bookings increase next month", "owner for review"),
             ("can I get a refund", "owner for review"),
@@ -383,6 +383,34 @@ class AssignmentDeskTests(unittest.TestCase):
         page = app.customer_page()
         self.assertIn("function addInlineHold", page)
         self.assertIn("if(d.hold_offer)addInlineHold", page)
+        self.assertNotIn("id='date' type='date'", page)
+        self.assertNotIn("Request hold</button><div id='holdResult'", page)
+
+    def test_natural_language_dates_use_next_upcoming_occurrence(self):
+        result = app.grounded_answer("is 20 dec free", app.load_bookings())
+        self.assertFalse(result["escalated"])
+        self.assertEqual(result.get("hold_offer"), "2026-12-20")
+        self.assertIn("20 December 2026", result["answer"])
+
+    def test_natural_language_package_prices(self):
+        rows = app.load_bookings()
+        for question, expected in (("full package kitne ka hai", "185,000"), ("pre wedding shoot price", "45,000"), ("haldi mehndi ka rate", "55,000")):
+            with self.subTest(question=question):
+                result = app.grounded_answer(question, rows)
+                self.assertFalse(result["escalated"])
+                self.assertIn(expected, result["answer"])
+
+    def test_greeting_is_not_escalated(self):
+        result = app.customer_answer("hi", app.load_bookings())
+        self.assertFalse(result["escalated"])
+        self.assertIn("How can I help", result["answer"])
+
+    def test_held_date_is_not_reported_as_free(self):
+        self.assertTrue(app.create_hold("2026-12-20", "First customer")["success"])
+        result = app.grounded_answer("is 20 dec free", app.load_bookings())
+        self.assertFalse(result["escalated"])
+        self.assertNotIn("hold_offer", result)
+        self.assertIn("on hold", result["answer"])
 
     def test_free_date_returns_hold_offer(self):
         result = app.customer_answer("Can I book 20 December 2026?", app.load_bookings())

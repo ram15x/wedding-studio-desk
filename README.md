@@ -109,8 +109,8 @@ Will bookings increase next month?
 
 Use the customer page like a WhatsApp conversation:
 
-1. Ask `Is 20 December 2026 available?`
-2. If it is free, the chat offers an in-chat hold form; enter a name and phone number and choose **Request hold**. The separate hold form remains available as a fallback.
+1. Ask `Is 20 December available?` (the next upcoming occurrence is used when the year is omitted).
+2. If it is free, the chat offers an in-chat hold form; enter a name and phone number and choose **Request hold**.
 3. Ask `What is my balance for SS-2043?` to retrieve a booking-specific value.
 4. Ask an unsupported question such as `Why did bookings decline?`; it is escalated to the owner.
 5. Open **Owner desk**, reply to the escalation, then return to **Customer chat** to see the owner reply in the same conversation.
@@ -119,7 +119,7 @@ The owner inbox shows current open escalations. Historical local demo rows can b
 
 ## Date holds
 
-Choose a date, customer name, and phone, then select **Request hold**. A free date is held for 24 hours. The same date cannot be held twice while the first hold is active. Dates already present in the CSV cannot be held. The owner can confirm or release an active hold from `/owner`.
+Ask for a date in the customer chat. A free date is held for 24 hours after the customer enters a name and phone in the inline chat form. The same date cannot be held twice while the first hold is active, and an active hold is reported as unavailable in chat. Dates already present in the CSV cannot be held. The owner can confirm or release an active hold from `/owner`.
 
 ## Owner desk
 
@@ -172,6 +172,7 @@ Set these variables privately in Railway before deploying:
 OWNER_PASSWORD=<private owner password>
 OPENROUTER_API_KEYS=<private comma-separated keys>
 OPENROUTER_MODELS=google/gemma-4-31b-it:free
+OPENROUTER_ALLOW_GROUNDED_DATA=1
 ```
 
 Never commit secret values. OpenRouter is optional; deterministic CSV answers remain the safety fallback when the provider is unavailable or rate-limited.
