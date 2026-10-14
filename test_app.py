@@ -416,6 +416,15 @@ class AssignmentDeskTests(unittest.TestCase):
                 self.assertFalse(result["escalated"])
                 self.assertIn(expected, result["answer"])
 
+    def test_month_first_and_ambiguous_dates_are_handled(self):
+        rows = app.load_bookings()
+        result = app.customer_answer("Is December 20 booked?", rows)
+        self.assertFalse(result["escalated"])
+        self.assertIn("20 December 2026", result["answer"])
+        clarification = app.customer_answer("Is the 19th free?", rows)
+        self.assertFalse(clarification["escalated"])
+        self.assertIn("day and month", clarification["answer"])
+
     def test_generic_booking_question_requests_id(self):
         result = app.customer_answer("Can you tell me about this booking?", app.load_bookings())
         self.assertFalse(result["escalated"])
