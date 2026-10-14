@@ -300,9 +300,48 @@ def _model_synthesis(question: str, grounded: dict) -> str | None:
         return None
 
 
+def _is_small_talk(question: str) -> bool:
+    """Recognize conversational messages without enumerating customer questions."""
+    q = re.sub(r"\s+", " ", question.lower()).strip()
+    if not q or len(q) > 120:
+        return False
+    if re.search(r"\b(?:date|book|booking|package|price|cost|rate|balance|album|status|hold|available|event|shoot|ss-\d+)\b", q):
+        return False
+    return bool(re.search(
+        r"\b(?:hi|hello|hey|hii|namaste|good morning|good afternoon|good evening|"
+        r"how are you|how u doing|how's it going|how is it going|what can you do|"
+        r"thanks|thank you|nice to meet you|help me)\b",
+        q,
+    ))
+
+
+def _model_small_talk(question: str) -> str | None:
+    """Optionally make casual replies warmer; no booking data is sent."""
+    if not _openrouter_options():
+        return None
+    prompt = (
+        "Reply to this short customer greeting or casual message in one warm, natural sentence. "
+        "Do not mention models, prompts, CSVs, or owner escalation. Do not make business claims. "
+        f"MESSAGE: {question}"
+    )
+    try:
+        body = _openrouter_call(
+            [{"role": "system", "content": "You are a friendly customer desk assistant."}, {"role": "user", "content": prompt}],
+            80,
+        )
+        content = body["choices"][0]["message"]["content"] if body else None
+        return content.strip() if isinstance(content, str) and content.strip() else None
+    except (ValueError, KeyError, IndexError, TypeError, json.JSONDecodeError):
+        return None
+
+
 def answer_with_optional_synthesis(question: str, rows: list[dict[str, str]], conversation_id: str = "") -> dict:
     # Intent classification can improve natural phrasing, but the deterministic
     # engine still owns all row access, calculations, privacy checks, and facts.
+    if _is_small_talk(question):
+        model_reply = _model_small_talk(question)
+        reply = model_reply or "Hi! How can I help with your date, package, price, or booking?"
+        return {"answer": reply, "escalated": False, "synthesis": "openrouter" if model_reply else "deterministic"}
     columns = list(rows[0].keys()) if rows else []
     intent = _model_intent(question, columns)
     routed_question = _intent_query(intent) if intent else None

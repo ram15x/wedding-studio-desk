@@ -1,4 +1,5 @@
 import sys
+import json
 import tempfile
 import unittest
 from unittest import mock
@@ -406,6 +407,24 @@ class AssignmentDeskTests(unittest.TestCase):
                 result = app.customer_answer(question, app.load_bookings())
                 self.assertFalse(result["escalated"])
                 self.assertIn("How can I help", result["answer"])
+
+    def test_conversational_messages_do_not_escalate(self):
+        for question in ("hi, how u doing", "how are you?", "thanks for your help"):
+            with self.subTest(question=question):
+                result = app.customer_answer(question, app.load_bookings())
+                self.assertFalse(result["escalated"])
+                self.assertTrue(result["answer"])
+
+    def test_small_talk_model_receives_no_booking_rows(self):
+        captured = {}
+        def fake_call(messages, max_tokens):
+            captured["prompt"] = json.dumps(messages)
+            return {"choices": [{"message": {"content": "I’m doing well — how can I help?"}}]}
+        with mock.patch.object(app, "_openrouter_options", return_value=[("key", "model")]), mock.patch.object(app, "_openrouter_call", side_effect=fake_call):
+            result = app.customer_answer("hi, how u doing", app.load_bookings())
+        self.assertFalse(result["escalated"])
+        self.assertEqual(result["synthesis"], "openrouter")
+        self.assertNotIn("Ananya Gupta", captured["prompt"])
 
     def test_held_date_is_not_reported_as_free(self):
         self.assertTrue(app.create_hold("2026-12-20", "First customer")["success"])
