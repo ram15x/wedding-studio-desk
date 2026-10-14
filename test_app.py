@@ -401,9 +401,11 @@ class AssignmentDeskTests(unittest.TestCase):
                 self.assertIn(expected, result["answer"])
 
     def test_greeting_is_not_escalated(self):
-        result = app.customer_answer("hi", app.load_bookings())
-        self.assertFalse(result["escalated"])
-        self.assertIn("How can I help", result["answer"])
+        for question in ("hi", "hi, how u doing", "hello there"):
+            with self.subTest(question=question):
+                result = app.customer_answer(question, app.load_bookings())
+                self.assertFalse(result["escalated"])
+                self.assertIn("How can I help", result["answer"])
 
     def test_held_date_is_not_reported_as_free(self):
         self.assertTrue(app.create_hold("2026-12-20", "First customer")["success"])

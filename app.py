@@ -518,7 +518,15 @@ def grounded_answer(question: str, rows: list[dict[str, str]], conversation_id: 
     columns = list(rows[0].keys()) if rows else []
     if not q:
         return {"answer": "Ask a question about bookings, dates, packages, prices, status, or album stage.", "escalated": False}
-    if re.fullmatch(r"(?:hi|hello|hey|hii|namaste|good morning|good afternoon|good evening)[!. ]*", q):
+    # Keep short social greetings in the conversation instead of escalating
+    # them, while requiring the whole message to be a greeting so a message
+    # such as "hi, is 20 dec free" still follows normal question routing.
+    if re.fullmatch(
+        r"(?:hi|hello|hey|hii|namaste|good morning|good afternoon|good evening)"
+        r"(?:[\s,!.]*(?:there|how(?: are| r| u)?(?: you| u)?(?: doing| going)?))?"
+        r"[!. ]*",
+        q,
+    ):
         return {"answer": "Hi! How can I help with your date, package, price, or booking?", "escalated": False}
     if any(word in q for word in ("why", "cause", "reason", "should we", "recommend", "forecast", "will bookings", "bookings increase", "bookings decrease", "bookings decline")):
         return escalate(question, "The CSV contains booking records but does not establish causes or business decisions.", conversation_id)
