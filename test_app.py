@@ -585,6 +585,42 @@ class AssignmentDeskTests(unittest.TestCase):
         self.assertEqual(answer, "Mehendi Date: 19 November 2026; Mehendi Time: 4:00 PM")
         conn.close()
 
+    def test_function_schedule_questions_return_only_requested_event_and_detail(self):
+        facts = {
+            "mehendi_date": "2026-11-19",
+            "mehendi_time": "2026-11-19 16:00",
+            "sangeet_date": "2026-11-20",
+            "sangeet_time": "2026-11-20 19:00",
+            "reception_date": "2026-11-22",
+            "reception_time": "2026-11-22 19:00",
+        }
+        self.assertEqual(
+            app.guest_desk._answer_fact("Sangeet kis din hai?", facts),
+            "Sangeet Date: 20 November 2026",
+        )
+        self.assertEqual(
+            app.guest_desk._answer_fact("What date is the Reception?", facts),
+            "Reception Date: 22 November 2026",
+        )
+        self.assertEqual(
+            app.guest_desk._answer_fact("What time does the Reception start?", facts),
+            "Reception Time: 7:00 PM",
+        )
+
+    def test_natural_english_decline_phrase_updates_rsvp(self):
+        conn = app.db()
+        session_id = self._guest_session(conn, "9000000098", "Asha")
+        result = app.guest_desk.guest_chat(conn, session_id, "Sorry, I can't make it to the wedding.")
+        saved = conn.execute(
+            "SELECT rsvp_status,party_size,function_responses_json FROM wedding_guests WHERE phone='9000000098'"
+        ).fetchone()
+        self.assertEqual(saved["rsvp_status"], "pending")
+        self.assertEqual(saved["party_size"], 0)
+        self.assertEqual(json.loads(saved["function_responses_json"]), {"Wedding": "not_coming"})
+        self.assertFalse(result["escalated"])
+        self.assertIn("unable to come", result["answer"].lower())
+        conn.close()
+
     def test_openrouter_guest_interpreter_returns_validated_intent_and_redacts_guest_data(self):
         response = {"choices": [{"message": {"content": json.dumps({
             "intent": "rsvp", "attendance": "coming", "functions": ["Wedding"],

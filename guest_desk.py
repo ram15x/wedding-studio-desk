@@ -245,7 +245,12 @@ def _extract_updates(text: str, guest) -> tuple[dict, list[str]]:
     updates = {}
     notes = []
     yes = re.search(r"\b(?:haan|han|yes|yep|yeah|coming|aa\s*rahe|aa\s*rahi|will attend|attending|count us in|we'll come|we will come)\b", low)
-    no = re.search(r"\b(?:nahi|nahin|no|not coming|can't come|cannot come|won't (?:make it|come)|not attending|unable to come)\b", low)
+    no = re.search(
+        r"\b(?:nahi|nahin|no|not coming|can't come|cannot come|can't attend|cannot attend|"
+        r"can't make it|cannot make it|won't (?:make it|come|attend)|won't be able to (?:make it|come|attend)|"
+        r"will not be able to (?:make it|come|attend)|not attending|not going|unable to come|unable to attend)\b",
+        low,
+    )
     if yes and no and yes.start() < no.start():
         yes = None
     if no:
@@ -330,11 +335,35 @@ def _answer_fact(question: str, facts: dict[str, str]) -> str | None:
     ) or bool(re.search(r"\b(?:what is|what's)\s+(?:the\s+)?venue\b", q))
     if venue_request:
         keys = [k for k in facts if any(x in k for x in ("venue", "location", "address"))]
-    elif re.search(r"\b(?:when|date|time|kab|kitne baje|schedule|timing)\b", q):
-        tokens = re.findall(r"[a-z0-9]+", q)
-        keys = [k for k in facts if any(token in k for token in tokens if len(token) > 2) and any(x in k for x in ("date", "time", "schedule", "function", "mehendi", "haldi", "sangeet", "wedding"))]
-        if not keys:
-            keys = [k for k in facts if any(x in k for x in ("schedule", "date", "time"))]
+    elif re.search(r"\b(?:when|date|time|kab|din|day|tarikh|tareekh|kitne baje|schedule|timing)\b", q):
+        tokens = set(re.findall(r"[a-z0-9]+", q))
+        schedule_keys = [
+            key for key in facts
+            if any(part in key.split("_") for part in ("date", "time", "schedule"))
+        ]
+        # Match an explicitly named function first, so a request about one
+        # function cannot leak every other function's date and time.
+        schedule_parts = {
+            part
+            for key in schedule_keys
+            for part in key.split("_")
+            if part not in {"date", "time", "schedule", "function", "at", "on"}
+        }
+        named_events = tokens & schedule_parts
+        if named_events:
+            schedule_keys = [key for key in schedule_keys if named_events & set(key.split("_"))]
+        wants_time = bool(re.search(r"\b(?:time|timing|what time|kitne baje|baje)\b", q))
+        wants_date_only = bool(re.search(r"\b(?:date|din|day|tarikh|tareekh)\b", q))
+        wants_when = bool(re.search(r"\b(?:when|kab)\b", q))
+        if wants_time and not (wants_date_only or wants_when):
+            time_keys = [key for key in schedule_keys if "time" in key.split("_")]
+            if time_keys:
+                schedule_keys = time_keys
+        elif wants_date_only and not wants_time:
+            date_keys = [key for key in schedule_keys if "date" in key.split("_")]
+            if date_keys:
+                schedule_keys = date_keys
+        keys = schedule_keys
     else:
         # A function name (for example, "Sangeet" or "wedding") is context,
         # not a request for its date. Only return schedule facts when the
