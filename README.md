@@ -1,191 +1,111 @@
-# Wedding Studio Desk
+# Wedding Guest Desk
 
-A small standalone booking assistant for the wedding studio assignment.
+A small, phone-friendly guest desk for one wedding. Guests confirm attendance or send travel needs in ordinary English or Hinglish. The family sees RSVP counts, arrivals, pickup and room requests, and can answer messages the desk cannot safely resolve.
 
-It loads the supplied booking CSV and provides:
+The app uses only the uploaded guest list and wedding details. It does not invent venue or schedule information, and it does not call an LLM for guest messages.
 
-- a WhatsApp-style customer chat
-- answers grounded only in the current CSV
-- a simple operating dashboard
-- safe escalation when the CSV cannot support an answer
-- 24-hour date holds with duplicate protection
-- owner upload of a replacement booking sheet
+## What it does
 
-No external model, API key, or database server is required for the deterministic path.
+- Family uploads a guest CSV with `name`, `phone`, `side`, `functions`, and `people` columns.
+- Family uploads a second CSV with `item,value` rows for the venue and function dates/times.
+- A guest enters the phone number listed in the guest sheet and replies in the chat. Examples include `haan aa rahe hain, 4 log, 21 ko train se`, `nahi aa payenge`, `need pickup`, and `room chahiye`.
+- RSVP, group size, arrival day/mode, room and pickup requests are saved to SQLite.
+- The family desk shows coming, not coming, and awaiting counts for each function, plus the guest and arrival lists.
+- Questions that are absent or unclear in the details go to the family inbox. A family reply appears in that guest’s chat.
+- SQLite chooses `/data/wedding_guest_desk.db` automatically when a writable `/data` volume is mounted; locally it uses ignored `assignment.db`.
 
-## Optional OpenRouter assistance
+The prototype identifies a guest by matching the entered phone number to the uploaded list. It does **not** verify ownership with SMS or WhatsApp OTP. Do not use real guest contact data on a public link without adding verified sign-in and privacy controls.
 
-For more natural questions and replies, the app can optionally call OpenRouter to classify the question into a small intent schema. Only the question text and visible column names are sent for intent classification; booking rows, credentials, and answers are not sent. The model never computes booking facts. The deterministic engine reads the CSV, enforces privacy, calculates the result, and remains the fallback if the key is missing, the provider fails, or validation rejects the response.
+## Run locally
 
-For a one-off process, set the key only in the local environment; do not put it in Git or the CSV:
+Requires Python 3.10 or later. There are no third-party Python dependencies.
 
 ```powershell
-$env:OPENROUTER_API_KEY = Get-Clipboard
-$env:OPENROUTER_MODEL = "google/gemma-4-31b-it:free"
+cd C:\Users\ramna\OneDrive\Desktop\wedding-studio-desk
+Copy-Item .env.local.example .env.local
+```
+
+Edit `.env.local` and set a private family password. Then start the server:
+
+```powershell
 py -3 app.py
 ```
 
-For a persistent local setup, create `.env.local` once. It is ignored by Git and loaded automatically on every local start. You can copy the three-key value from the clipboard without typing or printing it:
-
-```powershell
-$pool = ((Get-Clipboard).Trim() -replace "\s+", ",")
-Set-Content .env.local ("OPENROUTER_API_KEYS=" + $pool)
-Add-Content .env.local "OPENROUTER_MODELS=google/gemma-4-31b-it:free,google/gemma-4-31b-it:free,google/gemma-4-31b-it:free"
-Add-Content .env.local "OPENROUTER_ALLOW_GROUNDED_DATA=1"
-py -3 app.py
-```
-
-The tracked `.env.local.example` shows the expected shape. Real keys stay only in `.env.local`; the app never prints them. Configured key/model pairs rotate round-robin for successive calls, and a failed pair falls through to the remaining pairs. Rotation distributes requests but cannot bypass a shared provider account or free-tier quota. The LLM may classify wording and rewrite a verified answer, but the CSV engine remains authoritative for facts, calculations, and privacy.
-
-For a local fallback pool, provide comma-separated values. These are read only from the process environment; do not commit them to `.env` or Git:
-
-```powershell
-$env:OPENROUTER_API_KEYS = "key-one,key-two"
-$env:OPENROUTER_MODELS = "openai/gpt-4o-mini,google/gemini-2.0-flash"
-```
-
-The app tries each configured key/model pair after provider failures such as rate limits, then returns to the deterministic engine. This improves availability but does not bypass provider quotas or guarantee free usage.
-
-The customer UI shows only the conversational answer. OpenRouter is optional: it can classify natural language into a small intent shape, while the local deterministic engine remains authoritative for booking facts and privacy.
-
-The prose rewrite path is disabled by default because it would send the verified answer (which may contain booking facts) to OpenRouter. Enable it only if that disclosure is acceptable:
-
-```powershell
-$env:OPENROUTER_ALLOW_GROUNDED_DATA = "1"
-```
-
-The intent call is constrained to `date_availability`, `package_price`, `count`, `most_common`, `personal_lookup`, or `unsupported`. Its output is validated before it can influence routing; it cannot introduce a new field or value into an answer.
-
-## Pull and run
-
-```powershell
-git clone https://github.com/ram15x/wedding-studio-desk.git
-cd wedding-studio-desk
-py -3 app.py
-```
-
-For a hosted process, bind the same app to the platform-provided host and port:
+Open the guest chat at `http://127.0.0.1:8787/`. Open the password-protected family desk at `http://127.0.0.1:8787/owner` (username `owner`, password from `.env.local`). The same links work on a phone connected to the same network if the server is started with `ASSIGNMENT_HOST=0.0.0.0`; a public deployment is needed for guests outside that network. For LAN testing, set the host before starting:
 
 ```powershell
 $env:ASSIGNMENT_HOST = "0.0.0.0"
-$env:ASSIGNMENT_PORT = "10000"
 py -3 app.py
 ```
 
-Open this address in a browser:
+## Upload the demo wedding
+
+The repository includes a clearly fictional 20-person sample:
+
+- `data/demo_guest_list.csv`
+- `data/demo_wedding_details.csv`
+
+In the family desk, upload the first file as the guest list and the second as wedding details. Sample phone numbers are `9000000001` through `9000000020`.
+
+Try these messages from the guest chat:
 
 ```text
-http://127.0.0.1:8787
+Haan aa rahe hain, 4 log, 21 ko train se
+Nahi aa payenge, sorry
+We are coming, 3 people, flight on 21 Nov 2026, need pickup
+Room chahiye
+Venue kahan hai?
+Mehendi kab hai?
+Can we bring our dog to the venue?
 ```
 
-The default file is `data/studio_bookings.csv`. To use another CSV, upload it from **Owner desk**. The file must contain at least `booking_id` and `event_date` columns.
+The last question should appear in the family inbox. Reply from the family desk; the reply will show in that guest’s chat.
 
-## Questions to demonstrate
+## Persistence and deployment
 
-Supported examples:
+The guest list, family details, guest sessions, chat history, replies, and RSVP/travel changes are written to SQLite. On Railway, mount a volume at `/data`. The app detects this path and stores its database there, so deploys that reuse the volume retain state. If the volume is not mounted, local SQLite files in the app container can be lost on redeploy.
 
-```text
-Which event type is most common?
-What packages are listed?
-What is the average package price?
-How many bookings are confirmed?
-Is 14 December booked?
-How much is the Full Package?
-What is my balance for SS-2043?
-Where is my album? SS-2043
-```
+**Render note:** the included `render.yaml` is only a free preview configuration. Render Free web services have ephemeral filesystems, so this app's SQLite database can be erased by a restart, spin-down, or redeploy. Render's persistent disk requires a paid web-service plan; a free Render Postgres database is temporary and expires after 30 days. Therefore the free Render configuration does **not** meet the family's “data survives deploys” requirement. Use a durable mounted volume (for example, Railway `/data`) or implement and configure an external database before treating a public deployment as ready for family data. See [Render's free instance limits](https://render.com/docs/free) and [persistent disk docs](https://render.com/docs/disks).
 
-Owner reports retain the source file and customer answers use only the uploaded rows; the customer view omits internal provenance labels for readability.
-
-Customer chat does not expose totals, averages, or other customers' bookings. Personal questions require the booking ID. Questions that require information absent from the CSV are escalated instead of guessed:
-
-```text
-Why did bookings decline?
-Which marketing campaign should we run?
-Will bookings increase next month?
-```
-
-## Demo flow
-
-Use the customer page like a WhatsApp conversation:
-
-1. Ask `Is 20 December available?` (the next upcoming occurrence is used when the year is omitted).
-2. If it is free, the chat offers an in-chat hold form; enter a name and phone number and choose **Request hold**.
-3. Ask `What is my balance for SS-2043?` to retrieve a booking-specific value.
-4. Ask an unsupported question such as `Why did bookings decline?`; it is escalated to the owner.
-5. Open **Owner desk**, reply to the escalation, then return to **Customer chat** to see the owner reply in the same conversation.
-
-The owner inbox shows current open escalations. Historical local demo rows can be cleared by removing only the ignored `assignment.db`; this does not change the supplied CSV.
-
-## Date holds
-
-Ask for a date in the customer chat. A free date is held for 24 hours after the customer enters a name and phone in the inline chat form. The same date cannot be held twice while the first hold is active, and an active hold is reported as unavailable in chat. Dates already present in the CSV cannot be held. The owner can confirm or release an active hold from `/owner`.
-
-## Owner desk
-
-The customer page keeps owner tools hidden. Local `127.0.0.1` runs open the owner desk without a browser login prompt. Non-local requests require HTTP Basic Auth; configure a password before exposing the app:
-
-```powershell
-$env:OWNER_PASSWORD = "choose-a-local-owner-password"
-py -3 app.py
-```
-
-Open `http://127.0.0.1:8787/owner` directly. The owner desk can upload a replacement CSV, review escalations, see active holds, and reply to an escalated customer conversation. Do not expose this demo server publicly without real deployment authentication and durable storage; localhost bypass is intentional for this assignment demo.
-
-## Owner dashboard
-
-The operating picture shows row and field counts, categorical distributions, numeric totals and averages, and past/future dates. It is descriptive only; it does not infer causes, forecasts, policy, or business decisions.
-
-The demo is intentionally bounded: it does not send WhatsApp messages, connect to a live calendar, authenticate real customers, or answer unsupported business questions. A real deployment would need those controls and a hosted service.
-
-## Tests
-
-From the project folder:
-
-```powershell
-py -3 -m unittest -q test_app.py
-```
-
-The suite covers natural customer phrasing, privacy boundaries, grounded calculations, date holds, escalation, owner replies, CSV replacement, and provider-pool rotation. Provider calls are optional in tests; provider failures must fall back to deterministic answers.
-
-The local SQLite file `assignment.db` and Python caches are intentionally ignored by Git.
-
-## Railway deployment
-
-The current hosted demo runs on Railway:
-
-- Customer chat: https://wedding-studio-desk-production.up.railway.app/
-- Owner desk: https://wedding-studio-desk-production.up.railway.app/owner
-- Source repository: https://github.com/ram15x/wedding-studio-desk
-- Branch: `main`
-
-The service runs the standard-library Python server with:
+Set these Railway variables:
 
 ```text
 ASSIGNMENT_HOST=0.0.0.0
 ASSIGNMENT_PORT=8787
+OWNER_PASSWORD=<private family password>
 ```
 
-Set these variables privately in Railway before deploying:
+Do not set `ASSIGNMENT_DB_PATH` unless the volume is mounted somewhere other than `/data`. Never commit `.env.local` or real family data. The demo records are synthetic and should remain the first upload used for review.
 
-```text
-OWNER_PASSWORD=<private owner password>
-OPENROUTER_API_KEYS=<private comma-separated keys>
-OPENROUTER_MODELS=google/gemma-4-31b-it:free
-OPENROUTER_ALLOW_GROUNDED_DATA=1
-# Set this only when a durable Railway volume is mounted at /data:
-# ASSIGNMENT_DB_PATH=/data/assignment.db
+## Data formats
+
+Guest list header names can use common alternatives such as `guest_name`, `mobile`, `family_side`, `events`, or `number_of_people`. Separate multiple functions with semicolons, commas, or `|`.
+
+Wedding details use two columns named `item` and `value`; one fact per row. For example:
+
+```csv
+item,value
+Venue,"Lotus Convention Centre, 12 Park Road, Coimbatore"
+Mehendi Date,2026-11-19
+Mehendi Time,2026-11-19 16:00
 ```
 
-Never commit secret values. OpenRouter is optional; deterministic CSV answers remain the safety fallback when the provider is unavailable or rate-limited.
+Only facts in this file are used to answer venue and schedule questions. If a day-only arrival such as `21 ko` matches exactly one date in the uploaded schedule, the app records that date. If it cannot match uniquely, it leaves the date unset and asks the family to confirm.
 
-Railway's free trial/free allowance is suitable for a review demo, but it is not a production storage guarantee. The SQLite database, uploaded replacements, holds, and owner replies are stored on ephemeral service storage and may be lost after a redeploy or service reset. To preserve holds across deploys, mount a durable volume at `/data` and set `ASSIGNMENT_DB_PATH=/data/assignment.db`; otherwise treat holds as demo-only. A production deployment needs durable storage, customer authentication, backups, and a paid or otherwise persistent hosting plan.
+## Tests
 
-The local tunnel command remains useful for a temporary local review only:
+Run the regression suite from the project folder:
 
 ```powershell
-py -3 app.py
-npx localtunnel --port 8787
+py -3 -m unittest -v test_app.py
 ```
 
-The laptop and process must remain running while that tunnel is in use.
+The guest desk tests include 15 natural English/Hinglish messages, upload validation, per-function headcounts, persistent database writes, unsupported-question escalation, and the family-reply-to-guest flow. Existing booking-specific helper tests remain in the suite for the earlier Studio Desk code; they are not part of the guest workflow.
+
+## Current limits
+
+- The app is for one wedding workspace at a time. Uploading a new guest list replaces the previous list and its guest conversations.
+- Guest phone matching is a convenience for this demo, not strong authentication.
+- CSV is the supported upload format. Convert an Excel sheet to CSV before upload.
+- RSVP phrases cover common English and Hinglish patterns; anything that does not map cleanly to supported fields is escalated instead of guessed.
+- The app does not send WhatsApp messages, SMS codes, calendar invites, or transport bookings.

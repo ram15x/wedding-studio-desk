@@ -20,6 +20,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+import guest_desk
+
 ROOT = Path(__file__).resolve().parent
 
 
@@ -52,8 +54,10 @@ def _load_local_env() -> None:
 _load_local_env()
 CSV_PATH = Path(os.environ.get("ASSIGNMENT_CSV", ROOT / "data" / "studio_bookings.csv"))
 SOURCE_DISPLAY_NAME = CSV_PATH.name
-DB_PATH = Path(os.environ.get("ASSIGNMENT_DB_PATH", ROOT / "assignment.db"))
-PORT = int(os.environ.get("ASSIGNMENT_PORT", "8787"))
+_volume_db = Path("/data/wedding_guest_desk.db")
+_default_db = _volume_db if Path("/data").is_dir() and os.access("/data", os.W_OK) else ROOT / "assignment.db"
+DB_PATH = Path(os.environ.get("ASSIGNMENT_DB_PATH", _default_db))
+PORT = int(os.environ.get("ASSIGNMENT_PORT", os.environ.get("PORT", "8787")))
 HOST = os.environ.get("ASSIGNMENT_HOST", "127.0.0.1")
 DB_LOCK = threading.Lock()
 SESSION_LOCK = threading.Lock()
@@ -124,6 +128,8 @@ def parse_uploaded_file(handler: BaseHTTPRequestHandler) -> tuple[bytes, str]:
     """Parse the single CSV multipart field without the removed cgi module."""
     content_type = handler.headers.get("Content-Type", "")
     length = int(handler.headers.get("Content-Length", "0"))
+    if length <= 0 or length > 5 * 1024 * 1024:
+        raise ValueError("Upload must be a non-empty file smaller than 5 MB.")
     body = handler.rfile.read(length)
     header = f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode("utf-8")
     message = BytesParser(policy=policy.default).parsebytes(header + body)
@@ -173,6 +179,8 @@ def db() -> sqlite3.Connection:
         conn.execute("ALTER TABLE escalations ADD COLUMN reply TEXT")
     if "reply_created_at" not in escalation_columns:
         conn.execute("ALTER TABLE escalations ADD COLUMN reply_created_at TEXT")
+    import guest_desk
+    guest_desk.init_schema(conn)
     conn.commit()
     return conn
 
@@ -840,11 +848,6 @@ def owner_authorized(handler: BaseHTTPRequestHandler) -> bool:
 
 
 def require_owner(handler: BaseHTTPRequestHandler) -> bool:
-    # Local assignment users should not get a browser Basic Auth prompt. Keep
-    # protection for non-loopback callers so a hosted/public deployment is not
-    # silently exposed.
-    if handler.client_address and handler.client_address[0] in {"127.0.0.1", "::1", "localhost"}:
-        return True
     if owner_authorized(handler):
         return True
     handler.send_response(401)
@@ -893,7 +896,35 @@ class Handler(BaseHTTPRequestHandler):
         encoded = body.encode('utf-8'); self.send_response(status); self.send_header('Content-Type', content_type); self.send_header('Content-Length', str(len(encoded))); self.end_headers(); self.wfile.write(encoded)
     def do_GET(self):
         path = urlparse(self.path).path
-        if path == '/health': return self.send_json({'status':'ok','rows':len(load_bookings())})
+        if path == '/health':
+            conn = db(); count = conn.execute('SELECT COUNT(*) FROM wedding_guests').fetchone()[0]; conn.close()
+            return self.send_json({'status':'ok','guests':count})
+        if path == '/api/guest/session':
+            session_id = self.guest_session_id(create=True)
+            conn = db()
+            guest = guest_desk.session_guest(conn, session_id)
+            conn.close()
+            payload = {'session_id': session_id, 'guest': {'name': guest['name']} if guest else None}
+            body = json.dumps(payload).encode()
+            self.send_response(200); self.send_header('Content-Type','application/json')
+            self.send_header('Set-Cookie', f'guest_session={session_id}; HttpOnly; SameSite=Lax; Path=/')
+            self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body); return
+        if path == '/api/guest/conversation':
+            session_id = self.guest_session_id()
+            if not session_id: return self.send_json({'messages': []})
+            conn = db()
+            if not guest_desk.session_guest(conn, session_id):
+                conn.close(); return self.send_json({'messages': []})
+            messages = guest_desk.conversation(conn, session_id); conn.close()
+            return self.send_json({'messages': messages})
+        if path == '/api/family/dashboard':
+            if not require_owner(self): return
+            conn = db(); result = guest_desk.dashboard(conn); conn.close()
+            return self.send_json(result)
+        if path == '/api/family/inbox':
+            if not require_owner(self): return
+            conn = db(); items = guest_desk.family_inbox(conn); conn.close()
+            return self.send_json({'items': items})
         if path == '/api/dashboard':
             if not require_owner(self): return
             return self.send_json(dataset_dashboard(load_bookings()))
@@ -941,14 +972,56 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(latest_reply(conversation_id))
         if path == '/owner':
             if not require_owner(self): return
-            return self.send_text(OWNER_HTML, 'text/html; charset=utf-8')
+            return self.send_text(guest_desk.family_page(), 'text/html; charset=utf-8')
+        if path == '/family':
+            if not require_owner(self): return
+            return self.send_text(guest_desk.family_page(), 'text/html; charset=utf-8')
         if path == '/':
-            body=customer_page().encode(); session_id, created = browser_session(self); self.send_response(200); self.send_header('Content-Type','text/html; charset=utf-8');
-            if created: self.send_header('Set-Cookie', f'desk_session={session_id}; HttpOnly; SameSite=Lax')
+            body=guest_desk.guest_page().encode(); session_id=self.guest_session_id(create=True); self.send_response(200); self.send_header('Content-Type','text/html; charset=utf-8'); self.send_header('Set-Cookie', f'guest_session={session_id}; HttpOnly; SameSite=Lax; Path=/')
             self.send_header('Content-Length',str(len(body))); self.end_headers(); self.wfile.write(body); return
         self.send_error(404)
     def do_POST(self):
         path=urlparse(self.path).path
+        if path == '/api/guest/login':
+            data = self.read_json()
+            if data is None: return self.send_json({'error': 'Invalid request.'}, 400)
+            session_id = self.guest_session_id(create=True)
+            with DB_LOCK:
+                conn = db(); result = guest_desk.start_guest_session(conn, str(data.get('phone','')), session_id); conn.close()
+            return self.send_json(result, 200 if result.get('success') else 403)
+        if path == '/api/guest/chat':
+            data = self.read_json()
+            if data is None: return self.send_json({'error': 'Invalid request.'}, 400)
+            session_id = self.guest_session_id()
+            if not session_id or session_id != str(data.get('session_id', '')):
+                return self.send_json({'error': 'Guest session expired. Refresh and enter your phone number again.'}, 401)
+            with DB_LOCK:
+                conn = db(); result = guest_desk.guest_chat(conn, session_id, str(data.get('message',''))); conn.close()
+            return self.send_json(result, 400 if result.get('error') else 200)
+        if path in {'/api/family/upload-guests', '/api/family/upload-facts'}:
+            if not require_owner(self): return
+            try:
+                content, filename = parse_uploaded_file(self)
+                conn = db()
+                try:
+                    with DB_LOCK:
+                        result = guest_desk.upload_guests(conn, content, filename) if path.endswith('upload-guests') else guest_desk.upload_facts(conn, content, filename)
+                finally:
+                    conn.close()
+                return self.send_json(result)
+            except (KeyError, ValueError, UnicodeDecodeError, sqlite3.IntegrityError) as exc:
+                return self.send_json({'error': str(exc)}, 400)
+        if path == '/api/family/reply':
+            if not require_owner(self): return
+            data = self.read_json()
+            if data is None: return self.send_json({'error': 'Invalid request.'}, 400)
+            reply = str(data.get('reply','')).strip()[:2000]
+            try: item_id = int(data.get('id', 0))
+            except (TypeError, ValueError): item_id = 0
+            if not reply or not item_id: return self.send_json({'error': 'Choose a message and enter a reply.'}, 400)
+            with DB_LOCK:
+                conn = db(); success = guest_desk.family_reply(conn, item_id, reply); conn.close()
+            return self.send_json({'success': success}, 200 if success else 404)
         if path == '/api/upload':
             if not require_owner(self): return
             try:
@@ -998,13 +1071,27 @@ class Handler(BaseHTTPRequestHandler):
             if not re.fullmatch(r'20\d{2}-\d{2}-\d{2}', str(data.get('event_date',''))) or not str(data.get('customer_name','')).strip() or not str(data.get('customer_phone','')).strip(): return self.send_json({'success':False,'error':'Enter a valid date, customer name, and phone number.'},400)
             return self.send_json(create_hold(data['event_date'], data['customer_name'], data['customer_phone']))
         self.send_error(404)
+    def guest_session_id(self, create=False):
+        cookies = {}
+        for item in self.headers.get('Cookie', '').split(';'):
+            if '=' in item:
+                key, value = item.strip().split('=', 1); cookies[key] = value
+        session_id = cookies.get('guest_session', '')
+        if re.fullmatch(r'[0-9a-f-]{36}', session_id): return session_id
+        return str(uuid.uuid4()) if create else ''
+    def read_json(self):
+        try:
+            length = min(int(self.headers.get('Content-Length', '0')), 100_000)
+            payload = json.loads(self.rfile.read(length) or b'{}')
+            return payload if isinstance(payload, dict) else None
+        except (ValueError, json.JSONDecodeError):
+            return None
     def log_message(self, *_): pass
 
 
 if __name__ == '__main__':
     (ROOT / 'data').mkdir(exist_ok=True)
-    if not CSV_PATH.exists(): raise SystemExit(f'CSV not found: {CSV_PATH}')
     db().close()
-    print(f'Studio Desk using {CSV_PATH.name} ({len(load_bookings())} rows)')
+    print(f'Wedding Guest Desk using SQLite at {DB_PATH}')
     print(f'Open http://127.0.0.1:{PORT}')
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()

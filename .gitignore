@@ -1,4 +1,5 @@
 assignment.db
+data/uploaded.csv
 __pycache__/
 .env
 .env.local

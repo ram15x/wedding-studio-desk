@@ -15,8 +15,14 @@ class AssignmentDeskTests(unittest.TestCase):
         app.DB_PATH = Path(self.tmp.name) / "desk.db"
         app.CSV_PATH = Path(__file__).parent / "data" / "studio_bookings.csv"
         app.SOURCE_DISPLAY_NAME = app.CSV_PATH.name
+        self.provider_env = mock.patch.dict(app.os.environ, {
+            "OPENROUTER_API_KEYS": "", "OPENROUTER_API_KEY": "",
+            "OPENROUTER_MODELS": "", "OPENROUTER_MODEL": "",
+        })
+        self.provider_env.start()
 
     def tearDown(self):
+        self.provider_env.stop()
         self.tmp.cleanup()
 
     def test_answers_from_uploaded_rows(self):
@@ -510,6 +516,119 @@ class AssignmentDeskTests(unittest.TestCase):
             result = app.answer_with_optional_synthesis("What is my customer name SS-2043?", rows)
         self.assertIn("Ananya Gupta", result["answer"])
         self.assertNotIn("tentative", result["answer"])
+
+    def _guest_session(self, conn, phone, name="Guest"):
+        conn.execute("INSERT INTO wedding_guests(name,phone,side,functions_json,invited_count) VALUES(?,?,?,?,?)", (name, phone, "Bride", '["Mehendi","Wedding"]', 2))
+        session_id = f"test-session-{phone}"
+        result = app.guest_desk.start_guest_session(conn, phone, session_id)
+        self.assertTrue(result["success"])
+        return session_id
+
+    def test_fifteen_natural_guest_messages_update_or_escalate_correctly(self):
+        conn = app.db()
+        conn.execute("INSERT INTO wedding_facts(fact_key,fact_value,updated_at) VALUES('wedding_date','2026-11-21', 'now')")
+        conn.execute("INSERT INTO wedding_facts(fact_key,fact_value,updated_at) VALUES('mehendi_date','2026-11-19', 'now')")
+        conn.execute("INSERT INTO wedding_facts(fact_key,fact_value,updated_at) VALUES('venue','Lotus Convention Centre, Coimbatore', 'now')")
+        conn.commit()
+        cases = [
+            ("Haan aa rahe hain, 4 log, 21 ko train se", {"rsvp_status": "coming", "party_size": 4, "arrival_date": "2026-11-21", "arrival_mode": "train"}, "coming"),
+            ("Hum nahi aa payenge, sorry", {"rsvp_status": "not_coming", "party_size": 0}, "unable to come"),
+            ("We are coming, 3 people, flight on 21 Nov 2026, need pickup", {"rsvp_status": "coming", "party_size": 3, "arrival_date": "2026-11-21", "arrival_mode": "flight", "needs_pickup": 1}, "pickup"),
+            ("We need a room for our stay", {"needs_room": 1}, "room"),
+            ("We don't need pickup", {"needs_pickup": 0}, "don't need a pickup"),
+            ("Venue kahan hai?", {}, "Lotus Convention Centre"),
+            ("Mehendi kab hai?", {}, "19 november 2026"),
+            ("We are 2 people and coming", {"rsvp_status": "coming", "party_size": 2}, "2 people"),
+            ("No, we aren't attending", {"rsvp_status": "not_coming", "party_size": 0}, "unable to come"),
+            ("Train se 21 ko aayenge", {"arrival_date": "2026-11-21", "arrival_mode": "train"}, "arrive by train"),
+            ("Please reserve a room", {"needs_room": 1}, "need a room"),
+            ("Pickup chahiye for 2 people", {"needs_pickup": 1, "party_size": 2}, "pickup"),
+            ("What is the venue?", {}, "Lotus Convention Centre"),
+            ("Can I bring my dog?", {}, "passed your message to them"),
+            ("Thanks anna", {}, "what would you like to know"),
+        ]
+        for index, (message, expected, answer_fragment) in enumerate(cases, start=1):
+            with self.subTest(message=message):
+                phone = f"90000000{index:02d}"
+                session_id = self._guest_session(conn, phone)
+                result = app.guest_desk.guest_chat(conn, session_id, message)
+                self.assertIn(answer_fragment.lower(), result.get("answer", "").lower())
+                saved = conn.execute("SELECT * FROM wedding_guests WHERE phone=?", (phone,)).fetchone()
+                for field, value in expected.items():
+                    self.assertEqual(saved[field], value, f"{message}: {field}")
+        conn.close()
+
+    def test_guest_upload_validation_and_guest_count(self):
+        conn = app.db()
+        good = b"name,phone,side,functions,people\nAsha,9876543210,Bride,Mehendi;Wedding,3\n"
+        result = app.guest_desk.upload_guests(conn, good, "guest-list.csv")
+        self.assertEqual(result["guests"], 1)
+        self.assertIn("Mehendi", result["functions"])
+        bad = b"name,phone\nAsha,9876543210\n"
+        with self.assertRaisesRegex(ValueError, "needs columns"):
+            app.guest_desk.upload_guests(conn, bad, "bad.csv")
+        conn.close()
+
+    def test_function_schedule_answer_is_readable_and_comes_from_uploaded_details(self):
+        conn = app.db()
+        app.guest_desk.upload_facts(conn, b"item,value\nMehendi Date,2026-11-19\nMehendi Time,2026-11-19 16:00\n", "details.csv")
+        answer = app.guest_desk._answer_fact("Mehendi kab hai?", app.guest_desk._facts(conn))
+        self.assertEqual(answer, "Mehendi Date: 19 November 2026; Mehendi Time: 4:00 PM")
+        conn.close()
+
+    def test_unknown_question_escalates_and_family_reply_reaches_guest(self):
+        conn = app.db()
+        session_id = self._guest_session(conn, "9000000099", "Asha")
+        result = app.guest_desk.guest_chat(conn, session_id, "Can we bring our dog to the venue?")
+        self.assertTrue(result["escalated"])
+        inbox = app.guest_desk.family_inbox(conn)
+        self.assertEqual(len(inbox), 1)
+        self.assertTrue(app.guest_desk.family_reply(conn, inbox[0]["id"], "Please leave pets at home."))
+        messages = app.guest_desk.conversation(conn, session_id)
+        self.assertEqual(messages[-1]["role"], "family")
+        self.assertEqual(messages[-1]["body"], "Please leave pets at home.")
+        conn.close()
+
+    def test_dashboard_counts_coming_no_and_pending_per_function(self):
+        conn = app.db()
+        one = self._guest_session(conn, "9000000091", "Coming Guest")
+        two = self._guest_session(conn, "9000000092", "No Guest")
+        self._guest_session(conn, "9000000093", "Pending Guest")
+        app.guest_desk.guest_chat(conn, one, "Haan, 4 log aa rahe hain")
+        app.guest_desk.guest_chat(conn, two, "Nahi aa payenge")
+        data = app.guest_desk.dashboard(conn)
+        self.assertEqual(data["functions"]["Wedding"], {"coming": 1, "not_coming": 1, "pending": 1, "headcount": 4})
+        conn.close()
+
+    def test_guest_can_rsvp_to_a_specific_function_without_marking_all_functions(self):
+        conn = app.db()
+        session_id = self._guest_session(conn, "9000000094", "Function Guest")
+        result = app.guest_desk.guest_chat(conn, session_id, "Mehendi aa rahe hain")
+        self.assertIn("coming for Mehendi", result["answer"])
+        data = app.guest_desk.dashboard(conn)
+        self.assertEqual(data["functions"]["Mehendi"]["coming"], 1)
+        self.assertEqual(data["functions"]["Wedding"]["pending"], 1)
+        conn.close()
+
+    def test_ambiguous_day_only_arrival_is_not_saved_and_goes_to_family(self):
+        conn = app.db()
+        session_id = self._guest_session(conn, "9000000095", "Ambiguous Guest")
+        result = app.guest_desk.guest_chat(conn, session_id, "Train se 21 ko aa rahe hain")
+        saved = conn.execute("SELECT arrival_date FROM wedding_guests WHERE phone='9000000095'").fetchone()
+        self.assertTrue(result["escalated"])
+        self.assertIsNone(saved["arrival_date"])
+        self.assertEqual(len(app.guest_desk.family_inbox(conn)), 1)
+        conn.close()
+
+    def test_uploaded_guest_list_and_facts_are_database_persistent(self):
+        conn = app.db()
+        app.guest_desk.upload_guests(conn, b"name,phone,side,functions,people\nAsha,9876543210,Bride,Wedding,2\n", "guests.csv")
+        app.guest_desk.upload_facts(conn, b"item,value\nVenue,Lotus Hall\n", "details.csv")
+        conn.close()
+        conn = app.db()
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM wedding_guests").fetchone()[0], 1)
+        self.assertEqual(conn.execute("SELECT fact_value FROM wedding_facts WHERE fact_key='venue'").fetchone()[0], "Lotus Hall")
+        conn.close()
 
 if __name__ == "__main__":
     unittest.main()
