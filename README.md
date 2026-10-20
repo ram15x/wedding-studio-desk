@@ -116,7 +116,7 @@ Run the regression suite from the project folder:
 py -3 -m unittest -v test_app.py
 ```
 
-The guest desk tests include 15 natural English/Hinglish messages, upload validation, per-function headcounts, persistent database writes, unsupported-question escalation, and the family-reply-to-guest flow. Regression cases cover group phrases such as `hum dono` and confirm that an unsupported question mentioning the venue is escalated instead of being mistaken for a venue-location request. Existing booking-specific helper tests remain in the suite for the earlier Studio Desk code; they are not part of the guest workflow.
+The guest desk tests include 15 natural English/Hinglish messages, upload validation, per-function headcounts, persistent database writes, unsupported-question escalation, and the family-reply-to-guest flow. Regression cases also cover natural RSVP declines (including “I can't make it”), requests for one function's date or time in English and Hinglish, group phrases such as `hum dono`, and unsupported questions mentioning the venue. Existing booking-specific helper tests remain in the suite for the earlier Studio Desk code; they are not part of the guest workflow.
 
 ## Current limits
 
