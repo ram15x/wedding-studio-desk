@@ -324,7 +324,11 @@ def _arrival_time(text: str) -> str | None:
 
 def _answer_fact(question: str, facts: dict[str, str]) -> str | None:
     q = question.lower()
-    if re.search(r"\b(?:venue|location|address|kahan|where)\b", q):
+    venue_request = (
+        bool(re.search(r"\b(?:where|kahan|location|address)\b", q))
+        and bool(re.search(r"\b(?:venue|location|address)\b", q))
+    ) or bool(re.search(r"\b(?:what is|what's)\s+(?:the\s+)?venue\b", q))
+    if venue_request:
         keys = [k for k in facts if any(x in k for x in ("venue", "location", "address"))]
     elif re.search(r"\b(?:when|date|time|kab|kitne baje|schedule|timing)\b", q):
         tokens = re.findall(r"[a-z0-9]+", q)
@@ -341,7 +345,7 @@ def _answer_fact(question: str, facts: dict[str, str]) -> str | None:
             "what", "when", "where", "which", "there", "about", "does",
             "have", "this", "that", "with", "from", "your", "will",
             "can", "could", "would", "please", "tell", "know", "for",
-            "the", "and", "are", "is", "any",
+            "the", "and", "are", "is", "any", "venue", "location", "address",
         }
         tokens = [
             token for token in re.findall(r"[a-z0-9]+", q)

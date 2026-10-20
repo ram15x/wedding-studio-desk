@@ -609,6 +609,7 @@ class AssignmentDeskTests(unittest.TestCase):
         for question in (
             "Is there a dress code for Sangeet?",
             "Can I bring a dog to the wedding?",
+            "Can we bring our dog to the venue?",
         ):
             with self.subTest(question=question):
                 result = app.guest_desk.guest_chat(conn, session_id, question)
