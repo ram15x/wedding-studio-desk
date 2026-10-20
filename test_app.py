@@ -558,6 +558,15 @@ class AssignmentDeskTests(unittest.TestCase):
                     self.assertEqual(saved[field], value, f"{message}: {field}")
         conn.close()
 
+    def test_hinglish_both_of_us_reply_records_party_size_two(self):
+        conn = app.db()
+        session_id = self._guest_session(conn, "9000000088", "Meena")
+        result = app.guest_desk.guest_chat(conn, session_id, "Hum dono aa rahe hain, flight se")
+        saved = conn.execute("SELECT party_size FROM wedding_guests WHERE phone='9000000088'").fetchone()
+        self.assertEqual(saved["party_size"], 2)
+        self.assertIn("2 people", result["answer"])
+        conn.close()
+
     def test_guest_upload_validation_and_guest_count(self):
         conn = app.db()
         good = b"name,phone,side,functions,people\nAsha,9876543210,Bride,Mehendi;Wedding,3\n"
