@@ -589,6 +589,27 @@ class AssignmentDeskTests(unittest.TestCase):
         self.assertEqual(messages[-1]["body"], "Please leave pets at home.")
         conn.close()
 
+    def test_event_name_alone_does_not_answer_unrelated_wedding_detail(self):
+        conn = app.db()
+        session_id = self._guest_session(conn, "9000000098", "Asha")
+        app.guest_desk.upload_facts(
+            conn,
+            b"item,value\nSangeet Date,2026-11-20\nSangeet Time,2026-11-20 18:30\nWedding Date,2026-11-21\nVenue,Lotus Hall\n",
+            "details.csv",
+        )
+        for question in (
+            "Is there a dress code for Sangeet?",
+            "Can I bring a dog to the wedding?",
+        ):
+            with self.subTest(question=question):
+                result = app.guest_desk.guest_chat(conn, session_id, question)
+                self.assertTrue(result["escalated"])
+                self.assertIn("passed your message to them", result["answer"])
+        schedule = app.guest_desk._answer_fact("Sangeet kab hai?", app.guest_desk._facts(conn))
+        self.assertIn("20 November 2026", schedule)
+        self.assertIn("6:30 PM", schedule)
+        conn.close()
+
     def test_dashboard_counts_coming_no_and_pending_per_function(self):
         conn = app.db()
         one = self._guest_session(conn, "9000000091", "Coming Guest")

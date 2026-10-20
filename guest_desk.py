@@ -331,8 +331,26 @@ def _answer_fact(question: str, facts: dict[str, str]) -> str | None:
         if not keys:
             keys = [k for k in facts if any(x in k for x in ("schedule", "date", "time"))]
     else:
-        tokens = [t for t in re.findall(r"[a-z0-9]+", q) if len(t) > 3]
-        keys = [k for k in facts if any(token in k for token in tokens)]
+        # A function name (for example, "Sangeet" or "wedding") is context,
+        # not a request for its date. Only return schedule facts when the
+        # question explicitly asks when/what time; otherwise match the
+        # requested attribute against non-schedule facts.
+        schedule_words = {"date", "time", "schedule", "timing"}
+        stop_words = {
+            "what", "when", "where", "which", "there", "about", "does",
+            "have", "this", "that", "with", "from", "your", "will",
+            "can", "could", "would", "please", "tell", "know", "for",
+            "the", "and", "are", "is", "any",
+        }
+        tokens = [
+            token for token in re.findall(r"[a-z0-9]+", q)
+            if len(token) > 2 and token not in stop_words
+        ]
+        keys = [
+            key for key in facts
+            if not any(word in key.lower().split("_") for word in schedule_words)
+            and any(token in key.lower().replace("_", " ").split() for token in tokens)
+        ]
     keys = list(dict.fromkeys(keys))
     if len(keys) == 1:
         return f"{keys[0].replace('_',' ').title()}: {_format_fact(keys[0], facts[keys[0]])}"
