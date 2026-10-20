@@ -2,19 +2,32 @@
 
 A small, phone-friendly guest desk for one wedding. Guests confirm attendance or send travel needs in ordinary English or Hinglish. The family sees RSVP counts, arrivals, pickup and room requests, and can answer messages the desk cannot safely resolve.
 
-The app uses only the uploaded guest list and wedding details. It does not invent venue or schedule information, and it does not call an LLM for guest messages.
+## How answers and OpenRouter work
+
+When OpenRouter is configured, the guest chat can send a guest message to an LLM for **intent parsing only**. The model returns a constrained JSON classification (RSVP, wedding-detail question, greeting, or unsupported) and extracted fields. The app validates that output against the guest's invited functions and the keys in the uploaded wedding details.
+
+The model does **not** write customer-facing answers, decide wedding facts, update the database directly, or receive guest-list rows or wedding-detail values. Before sending a message, the app attempts to redact phone numbers and names found in the uploaded guest list. The message text itself is still sent to OpenRouter, so do not use real guest data unless the family accepts that disclosure. The model receives the allowed function names and wedding-detail **key names** to help classify the question. Answers are looked up locally from the uploaded sheets. If OpenRouter is missing, rate-limited, malformed, or uncertain, deterministic parsing continues and unclear requests go to the family inbox.
+
+Configure OpenRouter in `.env.local` for local use or as Railway service variables. Set a comma-separated pool of keys and model IDs; keys are paired with model IDs by position, and a failing pair falls through to the others:
+
+```text
+OPENROUTER_API_KEYS=<key-1>,<key-2>,<key-3>
+OPENROUTER_MODELS=<model-1>,<model-2>,<model-3>
+```
+
+Keep real keys private. Never commit them. If the variables are absent, the app works with deterministic parsing and local, sheet-grounded answers.
 
 ## What it does
 
 - Family uploads a guest CSV with `name`, `phone`, `side`, `functions`, and `people` columns.
 - Family uploads a second CSV with `item,value` rows for the venue and function dates/times.
-- A guest enters the phone number listed in the guest sheet and replies in the chat. Examples include `haan aa rahe hain, 4 log, 21 ko train se`, `nahi aa payenge`, `need pickup`, and `room chahiye`.
+- A guest enters the phone number listed in the guest sheet and replies in chat. Examples include `haan aa rahe hain, 4 log, 21 ko train se`, `nahi aa payenge`, `need pickup`, and `room chahiye`.
 - RSVP, group size, arrival day/mode, room and pickup requests are saved to SQLite.
-- The family desk shows coming, not coming, and awaiting counts for each function, plus the guest and arrival lists.
-- Questions that are absent or unclear in the details go to the family inbox. A family reply appears in that guest’s chat.
+- The family desk shows coming, not coming, and awaiting counts for each function, plus guest and arrival lists.
+- Questions absent from or unclear in the details go to the family inbox. A family reply appears in that guest's chat.
 - SQLite chooses `/data/wedding_guest_desk.db` automatically when a writable `/data` volume is mounted; locally it uses ignored `assignment.db`.
 
-The prototype identifies a guest by matching the entered phone number to the uploaded list. It does **not** verify ownership with SMS or WhatsApp OTP. Do not use real guest contact data on a public link without adding verified sign-in and privacy controls.
+The prototype identifies a guest by matching the entered phone number to the uploaded list. It does **not** verify ownership with SMS or WhatsApp OTP. Do not use real guest contact data on a public link without verified sign-in and appropriate privacy controls.
 
 ## Run locally
 

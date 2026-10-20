@@ -384,7 +384,7 @@ def _log_message(conn: sqlite3.Connection, session_id: str, role: str, body: str
     conn.execute("INSERT INTO guest_messages(session_id,role,body,created_at) VALUES(?,?,?,?)", (session_id, role, body, utc_now()))
 
 
-def guest_chat(conn: sqlite3.Connection, session_id: str, text: str) -> dict:
+def guest_chat(conn: sqlite3.Connection, session_id: str, text: str, model_intent: dict | None = None) -> dict:
     guest = session_guest(conn, session_id)
     if not guest:
         return {"error": "Start by entering the phone number from your invitation."}
@@ -397,6 +397,36 @@ def guest_chat(conn: sqlite3.Connection, session_id: str, text: str) -> dict:
     if function_update:
         notes = [note for note in notes if note not in {"coming", "not_coming"}]
         notes.append("function_rsvp")
+    if isinstance(model_intent, dict) and model_intent.get("confidence", 0) >= 0.85:
+        model_attendance = model_intent.get("attendance")
+        if not function_update and not any(note in notes for note in ("coming", "not_coming", "function_rsvp")) and model_attendance in {"coming", "not_coming"}:
+            model_functions = model_intent.get("functions", [])
+            allowed_functions = set(json.loads(guest["functions_json"]))
+            if isinstance(model_functions, list) and all(item in allowed_functions for item in model_functions):
+                if model_functions:
+                    previous = json.loads(guest["function_responses_json"] or "{}")
+                    previous.update({name: model_attendance for name in model_functions})
+                    updates.pop("rsvp_status", None)
+                    updates["function_responses_json"] = json.dumps(previous, ensure_ascii=False)
+                    function_update = (model_attendance, ", ".join(model_functions))
+                    notes.append("function_rsvp")
+                else:
+                    updates["rsvp_status"] = model_attendance
+                    notes.append(model_attendance)
+                    if model_attendance == "not_coming":
+                        updates.setdefault("party_size", 0)
+        model_count = model_intent.get("party_size")
+        if "party_size" not in updates and type(model_count) is int and 1 <= model_count <= 30:
+            updates["party_size"] = model_count
+            notes.append("count")
+        model_mode = model_intent.get("arrival_mode")
+        if "arrival_mode" not in updates and model_mode in {"train", "flight", "other"}:
+            updates["arrival_mode"] = model_mode
+            notes.append("arrival_mode")
+        for field, value in (("needs_room", model_intent.get("needs_room")), ("needs_pickup", model_intent.get("needs_pickup"))):
+            if field not in updates and type(value) is bool:
+                updates[field] = int(value)
+                notes.append(field)
     # Resolve day-only dates only against dates the family uploaded.
     has_date = bool(re.search(r"\b20\d{2}[-/]\d{1,2}[-/]\d{1,2}\b|\b\d{1,2}\s*(?:ko|tarikh)\b|\b\d{1,2}(?:st|nd|rd|th)\b|\b\d{1,2}\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b", text.lower()))
     if has_date and re.search(r"\b(?:arriv|land|train|flight|pahunch|aaunga|aaungi|aunga|aungi|aayenge|aa\s*rahe|aa\s*rahi|coming)\b", text.lower()):
@@ -415,7 +445,12 @@ def guest_chat(conn: sqlite3.Connection, session_id: str, text: str) -> dict:
         conn.execute(f"UPDATE wedding_guests SET {assignments},updated_at=? WHERE id=?", (*updates.values(), utc_now(), guest["id"]))
     if "ambiguous_arrival_date" in notes:
         conn.execute("INSERT INTO family_inbox(session_id,guest_id,question,reason,created_at) VALUES(?,?,?,?,?)", (session_id, guest["id"], text, "The arrival day could not be matched to exactly one date in the uploaded family schedule.", utc_now()))
-    facts_answer = _answer_fact(text, _facts(conn))
+    facts = _facts(conn)
+    facts_answer = _answer_fact(text, facts)
+    if not facts_answer and isinstance(model_intent, dict) and model_intent.get("intent") == "wedding_fact" and model_intent.get("confidence", 0) >= 0.85:
+        fact_key = model_intent.get("fact_key")
+        if isinstance(fact_key, str) and fact_key in facts:
+            facts_answer = f"{fact_key.replace('_', ' ').title()}: {_format_fact(fact_key, facts[fact_key])}"
     if notes:
         parts = []
         first_name = guest["name"].split()[0]

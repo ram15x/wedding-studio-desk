@@ -585,6 +585,53 @@ class AssignmentDeskTests(unittest.TestCase):
         self.assertEqual(answer, "Mehendi Date: 19 November 2026; Mehendi Time: 4:00 PM")
         conn.close()
 
+    def test_openrouter_guest_interpreter_returns_validated_intent_and_redacts_guest_data(self):
+        response = {"choices": [{"message": {"content": json.dumps({
+            "intent": "rsvp", "attendance": "coming", "functions": ["Wedding"],
+            "party_size": 4, "arrival_mode": "train", "needs_room": True,
+            "needs_pickup": False, "fact_key": "", "confidence": 0.98,
+        })}}]}
+        captured = {}
+        def fake_call(messages, max_tokens):
+            captured["prompt"] = messages[-1]["content"]
+            return response
+        with mock.patch.object(app, "_openrouter_options", return_value=[("fake", "test/model")]), mock.patch.object(app, "_openrouter_call", side_effect=fake_call):
+            result = app._model_guest_intent(
+                "Ananya Iyer, 9000000001: chaar log pakka aayenge train se, room chahiye",
+                ["Wedding"], ["venue", "wedding_date"], "Ananya Iyer", "9000000001", ["Ananya Iyer", "Karthik Raman"],
+            )
+        self.assertEqual(result["party_size"], 4)
+        self.assertEqual(result["functions"], ["Wedding"])
+        self.assertNotIn("Ananya Iyer", captured["prompt"])
+        self.assertNotIn("Karthik Raman", captured["prompt"])
+        self.assertNotIn("9000000001", captured["prompt"])
+        self.assertNotIn("Lotus Convention Centre", captured["prompt"])
+
+    def test_model_interpreted_rsvp_fills_only_unparsed_fields(self):
+        conn = app.db()
+        session_id = self._guest_session(conn, "9000000087", "Asha")
+        parsed = {"intent": "rsvp", "attendance": "coming", "functions": [], "party_size": 4,
+                  "arrival_mode": "train", "needs_room": True, "needs_pickup": False,
+                  "fact_key": "", "confidence": 0.96}
+        result = app.guest_desk.guest_chat(conn, session_id, "Pakka hum aayenge, chaar log rail se, room chahiye", parsed)
+        saved = conn.execute("SELECT rsvp_status,party_size,arrival_mode,needs_room,needs_pickup FROM wedding_guests WHERE phone='9000000087'").fetchone()
+        self.assertEqual(tuple(saved), ("coming", 4, "train", 1, 0))
+        self.assertFalse(result["escalated"])
+        conn.close()
+
+    def test_model_fact_key_still_reads_value_from_uploaded_family_sheet(self):
+        conn = app.db()
+        session_id = self._guest_session(conn, "9000000086", "Asha")
+        conn.execute("INSERT INTO wedding_facts(fact_key,fact_value,updated_at) VALUES('venue','Lotus Hall','now')")
+        conn.commit()
+        parsed = {"intent": "wedding_fact", "attendance": "unknown", "functions": [], "party_size": None,
+                  "arrival_mode": "unknown", "needs_room": None, "needs_pickup": None,
+                  "fact_key": "venue", "confidence": 0.97}
+        result = app.guest_desk.guest_chat(conn, session_id, "Where do we gather?", parsed)
+        self.assertEqual(result["answer"], "Venue: Lotus Hall")
+        self.assertFalse(result["escalated"])
+        conn.close()
+
     def test_unknown_question_escalates_and_family_reply_reaches_guest(self):
         conn = app.db()
         session_id = self._guest_session(conn, "9000000099", "Asha")
