@@ -51,6 +51,7 @@ Try these messages from the guest chat:
 
 ```text
 Haan aa rahe hain, 4 log, 21 ko train se
+Hum dono aa rahe hain, flight se 20 Nov ko. Room chahiye.
 Nahi aa payenge, sorry
 We are coming, 3 people, flight on 21 Nov 2026, need pickup
 Room chahiye
@@ -66,6 +67,8 @@ The last question should appear in the family inbox. Reply from the family desk;
 The guest list, family details, guest sessions, chat history, replies, and RSVP/travel changes are written to SQLite. On Railway, mount a volume at `/data`. The app detects this path and stores its database there, so deploys that reuse the volume retain state. If the volume is not mounted, local SQLite files in the app container can be lost on redeploy.
 
 **Render note:** the included `render.yaml` is only a free preview configuration. Render Free web services have ephemeral filesystems, so this app's SQLite database can be erased by a restart, spin-down, or redeploy. Render's persistent disk requires a paid web-service plan; a free Render Postgres database is temporary and expires after 30 days. Therefore the free Render configuration does **not** meet the family's “data survives deploys” requirement. Use a durable mounted volume (for example, Railway `/data`) or implement and configure an external database before treating a public deployment as ready for family data. See [Render's free instance limits](https://render.com/docs/free) and [persistent disk docs](https://render.com/docs/disks).
+
+To publish an update, push the tested commit to the connected GitHub branch, then deploy that commit from the Railway service if automatic deployment is not enabled. Confirm the deployment is active before sharing the updated behavior. Keep the Railway volume mounted at `/data` across deploys.
 
 Set these Railway variables:
 
@@ -100,7 +103,7 @@ Run the regression suite from the project folder:
 py -3 -m unittest -v test_app.py
 ```
 
-The guest desk tests include 15 natural English/Hinglish messages, upload validation, per-function headcounts, persistent database writes, unsupported-question escalation, and the family-reply-to-guest flow. Existing booking-specific helper tests remain in the suite for the earlier Studio Desk code; they are not part of the guest workflow.
+The guest desk tests include 15 natural English/Hinglish messages, upload validation, per-function headcounts, persistent database writes, unsupported-question escalation, and the family-reply-to-guest flow. Regression cases cover group phrases such as `hum dono` and confirm that an unsupported question mentioning the venue is escalated instead of being mistaken for a venue-location request. Existing booking-specific helper tests remain in the suite for the earlier Studio Desk code; they are not part of the guest workflow.
 
 ## Current limits
 
