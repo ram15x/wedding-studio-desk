@@ -472,6 +472,28 @@ def _answer_fact(question: str, facts: dict[str, str]) -> str | None:
     return None
 
 
+def _render_fact_keys(keys: list[str], facts: dict[str, str], hinglish: bool) -> str | None:
+    """Render only model-selected keys from the family sheet; the model supplies no values."""
+    selected = list(dict.fromkeys(key for key in keys if key in facts))
+    if not selected:
+        return None
+    schedule_keys = [key for key in selected if any(part in key.split("_") for part in ("date", "time", "schedule"))]
+    other_keys = [key for key in selected if key not in schedule_keys]
+    pieces = []
+    if schedule_keys:
+        schedule = _schedule_sentence(schedule_keys, facts, hinglish)
+        if schedule:
+            pieces.append(schedule)
+    for key in other_keys:
+        label = key.replace("_", " ").strip()
+        value = _format_fact(key, facts[key])
+        if any(word in label for word in ("venue", "location", "address")):
+            pieces.append((f"Venue {value} hai." if hinglish else f"The venue is {value}."))
+        else:
+            pieces.append((f"{label.title()} {value} hai." if hinglish else f"The {label} is {value}."))
+    return " ".join(pieces) if pieces else None
+
+
 def _is_hinglish(text: str) -> bool:
     return bool(re.search(r"\b(?:hai|hain|ho|kya|kab|kahan|kaise|kitne|mein|ko|se|aayenge|aaenge|aa rahe|aa rahi|hum|ham|nahi|nahin|haan|han|chahiye|batao|bataiye|shukriya|dhanyavaad)\b", text.lower()))
 
@@ -613,9 +635,9 @@ def guest_chat(conn: sqlite3.Connection, session_id: str, text: str, model_inten
     facts = _facts(conn)
     facts_answer = _answer_fact(text, facts)
     if not facts_answer and isinstance(model_intent, dict) and model_intent.get("intent") == "wedding_fact" and model_intent.get("confidence", 0) >= 0.85:
-        fact_key = model_intent.get("fact_key")
-        if isinstance(fact_key, str) and fact_key in facts:
-            facts_answer = _answer_fact(fact_key.replace("_", " "), facts) or f"The {fact_key.replace('_', ' ')} is {_format_fact(fact_key, facts[fact_key])}."
+        selected_keys = model_intent.get("fact_keys") or ([model_intent.get("fact_key")] if model_intent.get("fact_key") else [])
+        if isinstance(selected_keys, list) and all(isinstance(key, str) and key in facts for key in selected_keys):
+            facts_answer = _render_fact_keys(selected_keys, facts, _is_hinglish(text))
     if notes:
         parts = []
         first_name = guest["name"].split()[0]
@@ -659,6 +681,8 @@ def guest_chat(conn: sqlite3.Connection, session_id: str, text: str, model_inten
         reply = ". ".join(parts) + "."
         if facts_answer:
             reply += " " + facts_answer
+    elif isinstance(model_intent, dict) and model_intent.get("intent") == "small_talk" and model_intent.get("confidence", 0) >= 0.85:
+        reply = "Theek hoon, shukriya! Shaadi ke baare mein kya jaan na hai?" if _is_hinglish(text) else "I'm doing well, thanks for asking! What would you like to know about the wedding?"
     elif re.search(r"\b(?:hi|hello|hey|hii|namaste|vanakkam)\b", text.lower()) and len(text.split()) <= 8:
         reply = f"Hi {guest['name'].split()[0]}! What would you like to know about the wedding?"
     elif _is_acknowledgement(text):
@@ -671,7 +695,8 @@ def guest_chat(conn: sqlite3.Connection, session_id: str, text: str, model_inten
         reply = "Yeh baat family details mein nahi mili, maine family ko pooch liya hai. Reply yahin milega." if _is_hinglish(text) else "I couldn't confirm that from the family's details, so I've passed your message to them. They'll reply here."
     _log_message(conn, session_id, "desk", reply)
     conn.commit()
-    return {"answer": reply, "updated": updates, "escalated": count_conflict or "ambiguous_arrival_date" in notes or bool(not notes and not facts_answer and not _is_acknowledgement(text) and not re.search(r"\b(?:hi|hello|hey|hii|namaste|vanakkam)\b", text.lower()))}
+    model_small_talk = isinstance(model_intent, dict) and model_intent.get("intent") == "small_talk" and model_intent.get("confidence", 0) >= 0.85
+    return {"answer": reply, "updated": updates, "escalated": count_conflict or "ambiguous_arrival_date" in notes or bool(not notes and not facts_answer and not model_small_talk and not _is_acknowledgement(text) and not re.search(r"\b(?:hi|hello|hey|hii|namaste|vanakkam)\b", text.lower()))}
 
 
 def conversation(conn: sqlite3.Connection, session_id: str) -> list[dict]:

@@ -674,6 +674,47 @@ class AssignmentDeskTests(unittest.TestCase):
         self.assertFalse(result["escalated"])
         conn.close()
 
+    def test_model_maps_unseen_wording_to_multiple_uploaded_facts(self):
+        conn = app.db()
+        session_id = self._guest_session(conn, "9000000085", "Asha")
+        conn.execute("INSERT INTO wedding_facts(fact_key,fact_value,updated_at) VALUES('venue','Lotus Hall','now')")
+        conn.execute("INSERT INTO wedding_facts(fact_key,fact_value,updated_at) VALUES('dress_code','Traditional attire','now')")
+        conn.execute("INSERT INTO wedding_facts(fact_key,fact_value,updated_at) VALUES('parking','Available beside the hall','now')")
+        conn.commit()
+        response = {"choices": [{"message": {"content": json.dumps({
+            "intent": "wedding_fact", "attendance": "unknown", "functions": [],
+            "party_size": None, "arrival_mode": "unknown", "needs_room": None,
+            "needs_pickup": None, "fact_keys": ["venue", "dress_code"],
+            "fact_key": "", "confidence": 0.97,
+        })}}]}
+        captured = {}
+        def fake_call(messages, max_tokens):
+            captured["prompt"] = messages[-1]["content"]
+            return response
+        with mock.patch.object(app, "_openrouter_options", return_value=[("fake", "test/model")]), mock.patch.object(app, "_openrouter_call", side_effect=fake_call):
+            intent = app._model_guest_intent("What should I wear, and where do we meet?", ["Wedding"], ["venue", "dress_code", "parking"])
+        self.assertEqual(intent["fact_keys"], ["venue", "dress_code"])
+        self.assertIn("Match the meaning of the question, not its exact wording", captured["prompt"])
+        self.assertNotIn("Lotus Hall", captured["prompt"])
+        result = app.guest_desk.guest_chat(conn, session_id, "What should I wear, and where do we meet?", intent)
+        self.assertIn("Lotus Hall", result["answer"])
+        self.assertIn("Traditional attire", result["answer"])
+        self.assertNotIn("Available beside the hall", result["answer"])
+        self.assertFalse(result["escalated"])
+        conn.close()
+
+    def test_model_classified_general_small_talk_does_not_escalate(self):
+        conn = app.db()
+        session_id = self._guest_session(conn, "9000000084", "Asha")
+        intent = {"intent": "small_talk", "attendance": "unknown", "functions": [],
+                  "party_size": None, "arrival_mode": "unknown", "needs_room": None,
+                  "needs_pickup": None, "fact_key": "", "fact_keys": [], "confidence": 0.96}
+        result = app.guest_desk.guest_chat(conn, session_id, "Hope you're doing well today", intent)
+        self.assertIn("doing well", result["answer"].lower())
+        self.assertFalse(result["escalated"])
+        self.assertEqual(len(app.guest_desk.family_inbox(conn)), 0)
+        conn.close()
+
     def test_unknown_question_escalates_and_family_reply_reaches_guest(self):
         conn = app.db()
         session_id = self._guest_session(conn, "9000000099", "Asha")

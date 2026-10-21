@@ -24,7 +24,7 @@ This is a single-wedding prototype. Uploading another guest list replaces the cu
 
 ## How OpenRouter is used
 
-OpenRouter is optional. When configured, it classifies guest messages and extracts constrained intent such as RSVP, function, or arrival details. The app validates that output against the guest’s invited functions and wedding-fact keys. The model does not write facts or update the database; answers and updates come from the app and uploaded records. If the model fails or is uncertain, deterministic parsing is used and unsupported questions go to the family.
+OpenRouter is optional. When available, it interprets natural wording and maps a question to one or more keys from the uploaded family sheet, or extracts RSVP details such as function, attendance, and travel. This is meant to handle different wording and multi-part questions without a list of exact canned questions. The app validates the selected keys and reads the answer values from the database; the model never supplies wedding facts or updates records. If the model fails or is uncertain, deterministic parsing is used and unsupported questions go to the family. The fallback is narrower, so a configured key alone does not prove that the provider is responding: the model IDs must be valid and the account must have usable access or credits.
 
 The app attempts to redact guest names and phone numbers before sending the message, but redaction is best-effort. Message text, allowed function names, and wedding-fact key names may be sent to OpenRouter; guest-list rows and fact values are not sent. Do not use real guest information with an external provider unless the family has approved that disclosure.
 
