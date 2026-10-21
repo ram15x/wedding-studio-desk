@@ -68,6 +68,23 @@ test("a later travel update does not reverse an explicit function decline", () =
   assert.equal(parsed.updates.needs_room, 1);
 });
 
+test("a casual Hinglish pickup request is recorded", () => {
+  const parsed = parseRsvp(
+    "Haan aa rahe hain, 2 log, 20 ko flight se. Room chahiye aur pickup bhi.",
+    guest,
+    { "sangeet date": "2026-11-20" },
+  );
+  assert.equal(parsed.updates.needs_pickup, 1);
+  assert.equal(parsed.updates.needs_room, 1);
+  assert.equal(parsed.updates.arrival_mode, "flight");
+  assert.equal(parsed.updates.arrival_date, "2026-11-20");
+});
+
+test("an explicit Hinglish pickup decline overrides a positive mention", () => {
+  const parsed = parseRsvp("Pickup bhi nahi chahiye", guest, {});
+  assert.equal(parsed.updates.needs_pickup, 0);
+});
+
 test("short greetings with small talk do not get routed as unknown questions", () => {
   assert.equal(isConversationalGreeting("Hi, how are you?"), true);
   assert.equal(isConversationalGreeting("Hey, what can you help me with?"), true);

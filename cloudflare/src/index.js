@@ -366,11 +366,11 @@ function parseRsvp(text, g, facts, intent = null) {
     updates.needs_room = 0;
     notes.push("needs_room");
   }
-  if (/pickup chahiye|need pickup|need a pickup|pick me up/.test(q)) {
+  if (/pickup chahiye|pickup chaiye|pickup bhi|pickup kar do|pickup kar dena|need pickup|need a pickup|pick me up/.test(q)) {
     updates.needs_pickup = 1;
     notes.push("needs_pickup");
   }
-  if (/no pickup|pickup nahi|don't need pickup/.test(q)) {
+  if (/no pickup|pickup (?:bhi )?(?:nahi|nahin)|don't need pickup/.test(q)) {
     updates.needs_pickup = 0;
     notes.push("needs_pickup");
   }
