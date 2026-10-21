@@ -12,10 +12,12 @@ The Worker has a D1 database and synthetic 20-guest wedding data. The D1 databas
 
 The three configured keys are stored as Cloudflare secrets. They belong to one OpenRouter account, so they do not multiply that account's free-tier quota. The `openrouter/free` model router chooses an available free model; free-provider availability, rate limits, output quality and latency can vary. Never treat a model classification as the source of guest or wedding facts.
 
+The `af827af` source update is pushed to GitHub but has not yet been deployed. The public Worker still runs the prior version until deployment authentication is completed.
+
 ## Deploy
 
 1. Install Node.js, then from this directory run `npm install`.
-2. Sign in with `npx wrangler login --device --scopes user:read account:read workers:write workers_scripts:write d1:write` (device login avoids the localhost callback issue in some environments).
+2. For an existing Worker, use an account-owned API token scoped to this Worker with the Workers Editor permission. Set it in `CLOUDFLARE_API_TOKEN` and set `CLOUDFLARE_ACCOUNT_ID`. Cloudflare documents that deploying an existing Worker with D1 bindings needs Worker Editor access; separate D1 table access is not required for code deployment. Avoid Wrangler's default OAuth consent if it requests unrelated account, zone, email, or security permissions.
 3. Create the persistent D1 database: `npx wrangler d1 create ishqweds-guest-desk`.
 4. Copy the returned database ID into `wrangler.toml`, replacing `REPLACE_WITH_D1_DATABASE_ID`.
 5. Set an owner password as a Cloudflare secret: `npx wrangler secret put OWNER_PASSWORD`. The current deployment's generated password is kept in the ignored local file `.owner-password.local`; do not commit or share it publicly.
