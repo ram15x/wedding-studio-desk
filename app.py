@@ -21,6 +21,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import guest_desk
+from database import connect_postgres, is_integrity_error
 
 ROOT = Path(__file__).resolve().parent
 
@@ -44,7 +45,7 @@ def _load_local_env() -> None:
             continue
         key, value = line.split("=", 1)
         key, value = key.strip(), value.strip()
-        if not key or key not in {"OPENROUTER_API_KEYS", "OPENROUTER_API_KEY", "OPENROUTER_MODELS", "OPENROUTER_MODEL", "OPENROUTER_ALLOW_GROUNDED_DATA", "OPENROUTER_TIMEOUT_SECONDS", "OWNER_PASSWORD"}:
+        if not key or key not in {"OPENROUTER_API_KEYS", "OPENROUTER_API_KEY", "OPENROUTER_MODELS", "OPENROUTER_MODEL", "OPENROUTER_ALLOW_GROUNDED_DATA", "OPENROUTER_TIMEOUT_SECONDS", "OWNER_PASSWORD", "SUPABASE_DB_URL", "DATABASE_URL"}:
             continue
         if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
             value = value[1:-1]
@@ -144,6 +145,31 @@ def parse_uploaded_file(handler: BaseHTTPRequestHandler) -> tuple[bytes, str]:
 
 
 def db() -> sqlite3.Connection:
+    postgres_url = os.environ.get("SUPABASE_DB_URL", "").strip() or os.environ.get("DATABASE_URL", "").strip()
+    if postgres_url:
+        conn = connect_postgres(postgres_url)
+        conn.execute("""CREATE TABLE IF NOT EXISTS holds (
+            id BIGSERIAL PRIMARY KEY,
+            event_date TEXT NOT NULL UNIQUE,
+            customer_name TEXT NOT NULL,
+            customer_phone TEXT NOT NULL DEFAULT '',
+            expires_at TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active'
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS escalations (
+            id BIGSERIAL PRIMARY KEY,
+            question TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'open',
+            conversation_id TEXT NOT NULL DEFAULT '',
+            reply TEXT,
+            reply_created_at TEXT
+        )""")
+        guest_desk.init_schema(conn)
+        conn.commit()
+        return conn
     conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
@@ -888,7 +914,9 @@ def create_hold(event_date: str, customer_name: str, customer_phone: str = "") -
         try:
             conn.execute("INSERT INTO holds(event_date, customer_name, customer_phone, expires_at, created_at, status) VALUES (?, ?, ?, ?, ?, 'active')", (event_date, customer_name, customer_phone, expires.isoformat(), now.isoformat()))
             conn.commit(); result = {"success": True, "event_date": event_date, "customer_name": customer_name, "expires_at": expires.isoformat()}
-        except sqlite3.IntegrityError:
+        except Exception as exc:
+            if not is_integrity_error(exc):
+                raise
             conn.rollback(); result = {"success": False, "error": "That date is already held by another customer."}
         conn.close()
     return result
@@ -985,7 +1013,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = urlparse(self.path).path
         if path == '/health':
-            conn = db(); count = conn.execute('SELECT COUNT(*) FROM wedding_guests').fetchone()[0]; conn.close()
+            conn = db(); count = conn.execute('SELECT COUNT(*) AS guest_count FROM wedding_guests').fetchone()["guest_count"]; conn.close()
             return self.send_json({'status':'ok','guests':count})
         if path == '/api/guest/session':
             session_id = self.guest_session_id(create=True)
@@ -1091,7 +1119,7 @@ class Handler(BaseHTTPRequestHandler):
                     guest_name, guest_phone = guest['name'], guest['phone']
                     functions = json.loads(guest['functions_json'])
                     fact_keys = list(guest_desk._facts(conn))
-                    guest_names = [row[0] for row in conn.execute("SELECT name FROM wedding_guests")]
+                    guest_names = [row["name"] for row in conn.execute("SELECT name FROM wedding_guests")]
                 else:
                     guest_name, guest_phone, functions, fact_keys, guest_names = '', '', [], [], []
                 conn.close()
@@ -1110,8 +1138,12 @@ class Handler(BaseHTTPRequestHandler):
                 finally:
                     conn.close()
                 return self.send_json(result)
-            except (KeyError, ValueError, UnicodeDecodeError, sqlite3.IntegrityError) as exc:
+            except (KeyError, ValueError, UnicodeDecodeError) as exc:
                 return self.send_json({'error': str(exc)}, 400)
+            except Exception as exc:
+                if is_integrity_error(exc):
+                    return self.send_json({'error': 'The uploaded data conflicts with an existing record.'}, 400)
+                raise
         if path == '/api/family/reply':
             if not require_owner(self): return
             data = self.read_json()
@@ -1157,7 +1189,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({'error': 'Conversation and reply are required.'}, 400)
             now = datetime.now(timezone.utc).isoformat()
             with DB_LOCK:
-                conn = db(); cur = conn.execute('UPDATE escalations SET reply = ?, reply_created_at = ?, status = "replied" WHERE conversation_id = ? AND status = "open"', (reply, now, conversation_id)); conn.commit(); conn.close()
+                conn = db(); cur = conn.execute("UPDATE escalations SET reply = ?, reply_created_at = ?, status = 'replied' WHERE conversation_id = ? AND status = 'open'", (reply, now, conversation_id)); conn.commit(); conn.close()
             return self.send_json({'success': cur.rowcount > 0})
         if path == '/api/owner/hold-action':
             if not require_owner(self): return
@@ -1166,7 +1198,7 @@ class Handler(BaseHTTPRequestHandler):
             if status not in {'confirmed', 'released'}:
                 return self.send_json({'error': 'Status must be confirmed or released.'}, 400)
             with DB_LOCK:
-                conn = db(); cur = conn.execute('UPDATE holds SET status = ? WHERE id = ? AND status = "active"', (status, hold_id)); conn.commit(); conn.close()
+                conn = db(); cur = conn.execute("UPDATE holds SET status = ? WHERE id = ? AND status = 'active'", (status, hold_id)); conn.commit(); conn.close()
             return self.send_json({'success': cur.rowcount > 0})
         if path == '/api/hold':
             if not re.fullmatch(r'20\d{2}-\d{2}-\d{2}', str(data.get('event_date',''))) or not str(data.get('customer_name','')).strip() or not str(data.get('customer_phone','')).strip(): return self.send_json({'success':False,'error':'Enter a valid date, customer name, and phone number.'},400)

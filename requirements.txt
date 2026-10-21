@@ -1,1 +1,3 @@
-# The assignment uses only Python's standard library.
+# psycopg is used only when Supabase Postgres is configured; SQLite local mode
+# remains available for offline development and tests.
+psycopg[binary]>=3.2,<4

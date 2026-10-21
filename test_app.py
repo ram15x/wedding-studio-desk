@@ -7,6 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import app
+import database
 
 
 class AssignmentDeskTests(unittest.TestCase):
@@ -24,6 +25,11 @@ class AssignmentDeskTests(unittest.TestCase):
     def tearDown(self):
         self.provider_env.stop()
         self.tmp.cleanup()
+
+    def test_supabase_adapter_translates_placeholders_and_sqlite_transaction_keyword(self):
+        self.assertEqual(database.PostgresCompatConnection._sql("SELECT * FROM people WHERE phone=?"), "SELECT * FROM people WHERE phone=%s")
+        self.assertEqual(database.PostgresCompatConnection._sql("BEGIN IMMEDIATE"), "BEGIN")
+        self.assertEqual(database.PostgresCompatConnection._sql('UPDATE holds SET status = "active" WHERE id = ?'), "UPDATE holds SET status = 'active' WHERE id = %s")
 
     def test_answers_from_uploaded_rows(self):
         result = app.grounded_answer("Which event type is most common?", app.load_bookings())
@@ -531,8 +537,8 @@ class AssignmentDeskTests(unittest.TestCase):
         conn.execute("INSERT INTO wedding_facts(fact_key,fact_value,updated_at) VALUES('venue','Lotus Convention Centre, Coimbatore', 'now')")
         conn.commit()
         cases = [
-            ("Haan aa rahe hain, 4 log, 21 ko train se", {"rsvp_status": "coming", "party_size": 4, "arrival_date": "2026-11-21", "arrival_mode": "train"}, "coming"),
-            ("Hum nahi aa payenge, sorry", {"rsvp_status": "not_coming", "party_size": 0}, "unable to come"),
+            ("Haan aa rahe hain, 4 log, 21 ko train se", {"rsvp_status": "coming", "party_size": 4, "arrival_date": "2026-11-21", "arrival_mode": "train"}, "aane wala"),
+            ("Hum nahi aa payenge, sorry", {"rsvp_status": "not_coming", "party_size": 0}, "nahi aa raha"),
             ("We are coming, 3 people, flight on 21 Nov 2026, need pickup", {"rsvp_status": "coming", "party_size": 3, "arrival_date": "2026-11-21", "arrival_mode": "flight", "needs_pickup": 1}, "pickup"),
             ("We need a room for our stay", {"needs_room": 1}, "room"),
             ("We don't need pickup", {"needs_pickup": 0}, "don't need a pickup"),
@@ -540,12 +546,12 @@ class AssignmentDeskTests(unittest.TestCase):
             ("Mehendi kab hai?", {}, "19 november 2026"),
             ("We are 2 people and coming", {"rsvp_status": "coming", "party_size": 2}, "2 people"),
             ("No, we aren't attending", {"rsvp_status": "not_coming", "party_size": 0}, "unable to come"),
-            ("Train se 21 ko aayenge", {"arrival_date": "2026-11-21", "arrival_mode": "train"}, "arrive by train"),
+            ("Train se 21 ko aayenge", {"arrival_date": "2026-11-21", "arrival_mode": "train"}, "aayenge"),
             ("Please reserve a room", {"needs_room": 1}, "need a room"),
             ("Pickup chahiye for 2 people", {"needs_pickup": 1, "party_size": 2}, "pickup"),
             ("What is the venue?", {}, "Lotus Convention Centre"),
             ("Can I bring my dog?", {}, "passed your message to them"),
-            ("Thanks anna", {}, "what would you like to know"),
+            ("Thanks anna", {}, "you're welcome"),
         ]
         for index, (message, expected, answer_fragment) in enumerate(cases, start=1):
             with self.subTest(message=message):
@@ -564,7 +570,7 @@ class AssignmentDeskTests(unittest.TestCase):
         result = app.guest_desk.guest_chat(conn, session_id, "Hum dono aa rahe hain, flight se")
         saved = conn.execute("SELECT party_size FROM wedding_guests WHERE phone='9000000088'").fetchone()
         self.assertEqual(saved["party_size"], 2)
-        self.assertIn("2 people", result["answer"])
+        self.assertIn("2 log", result["answer"])
         conn.close()
 
     def test_guest_upload_validation_and_guest_count(self):
@@ -582,7 +588,7 @@ class AssignmentDeskTests(unittest.TestCase):
         conn = app.db()
         app.guest_desk.upload_facts(conn, b"item,value\nMehendi Date,2026-11-19\nMehendi Time,2026-11-19 16:00\n", "details.csv")
         answer = app.guest_desk._answer_fact("Mehendi kab hai?", app.guest_desk._facts(conn))
-        self.assertEqual(answer, "Mehendi Date: 19 November 2026; Mehendi Time: 4:00 PM")
+        self.assertEqual(answer, "Mehendi 19 November 2026 ko 4:00 PM par hai.")
         conn.close()
 
     def test_function_schedule_questions_return_only_requested_event_and_detail(self):
@@ -596,15 +602,15 @@ class AssignmentDeskTests(unittest.TestCase):
         }
         self.assertEqual(
             app.guest_desk._answer_fact("Sangeet kis din hai?", facts),
-            "Sangeet Date: 20 November 2026",
+            "Sangeet 20 November 2026 ko 7:00 PM par hai.",
         )
         self.assertEqual(
             app.guest_desk._answer_fact("What date is the Reception?", facts),
-            "Reception Date: 22 November 2026",
+            "Reception is on 22 November 2026 at 7:00 PM.",
         )
         self.assertEqual(
             app.guest_desk._answer_fact("What time does the Reception start?", facts),
-            "Reception Time: 7:00 PM",
+            "Reception is on 22 November 2026 at 7:00 PM.",
         )
 
     def test_natural_english_decline_phrase_updates_rsvp(self):
@@ -652,7 +658,7 @@ class AssignmentDeskTests(unittest.TestCase):
         result = app.guest_desk.guest_chat(conn, session_id, "Pakka hum aayenge, chaar log rail se, room chahiye", parsed)
         saved = conn.execute("SELECT rsvp_status,party_size,arrival_mode,needs_room,needs_pickup FROM wedding_guests WHERE phone='9000000087'").fetchone()
         self.assertEqual(tuple(saved), ("coming", 4, "train", 1, 0))
-        self.assertFalse(result["escalated"])
+        self.assertTrue(result["escalated"])
         conn.close()
 
     def test_model_fact_key_still_reads_value_from_uploaded_family_sheet(self):
@@ -664,7 +670,7 @@ class AssignmentDeskTests(unittest.TestCase):
                   "arrival_mode": "unknown", "needs_room": None, "needs_pickup": None,
                   "fact_key": "venue", "confidence": 0.97}
         result = app.guest_desk.guest_chat(conn, session_id, "Where do we gather?", parsed)
-        self.assertEqual(result["answer"], "Venue: Lotus Hall")
+        self.assertEqual(result["answer"], "The venue is Lotus Hall.")
         self.assertFalse(result["escalated"])
         conn.close()
 
@@ -718,11 +724,64 @@ class AssignmentDeskTests(unittest.TestCase):
         conn = app.db()
         session_id = self._guest_session(conn, "9000000094", "Function Guest")
         result = app.guest_desk.guest_chat(conn, session_id, "Mehendi aa rahe hain")
-        self.assertIn("coming for Mehendi", result["answer"])
+        self.assertIn("Mehendi ke liye", result["answer"])
         data = app.guest_desk.dashboard(conn)
         self.assertEqual(data["functions"]["Mehendi"]["coming"], 1)
         self.assertEqual(data["functions"]["Wedding"]["pending"], 1)
         conn.close()
+
+    def test_mixed_hinglish_function_rsvp_updates_wedding_and_reception_separately(self):
+        conn = app.db()
+        session_id = self._guest_session(conn, "9000000081", "Arjun")
+        conn.execute("UPDATE wedding_guests SET functions_json='[\"Wedding\",\"Reception\"]', invited_count=3 WHERE phone='9000000081'")
+        result = app.guest_desk.guest_chat(conn, session_id, "Hum 2 log aayenge shaadi mein, reception nahi aa paayenge")
+        saved = conn.execute("SELECT function_responses_json,party_size FROM wedding_guests WHERE phone='9000000081'").fetchone()
+        responses = json.loads(saved["function_responses_json"])
+        self.assertEqual(responses, {"Wedding": "coming", "Reception": "not_coming"})
+        self.assertEqual(saved["party_size"], 2)
+        self.assertIn("Wedding (aayenge)", result["answer"])
+        self.assertIn("Reception (nahi aa payenge)", result["answer"])
+        dashboard = app.guest_desk.dashboard(conn)
+        self.assertEqual(dashboard["functions"]["Wedding"], {"coming": 1, "not_coming": 0, "pending": 0, "headcount": 2})
+        self.assertEqual(dashboard["functions"]["Reception"], {"coming": 0, "not_coming": 1, "pending": 0, "headcount": 0})
+        self.assertFalse(result["escalated"])
+        conn.close()
+
+    def test_party_count_alone_marks_guest_coming(self):
+        conn = app.db()
+        session_id = self._guest_session(conn, "9000000080", "Meena")
+        result = app.guest_desk.guest_chat(conn, session_id, "Hum 6 log aayenge")
+        saved = conn.execute("SELECT rsvp_status,party_size FROM wedding_guests WHERE phone='9000000080'").fetchone()
+        self.assertEqual(tuple(saved), ("coming", 6))
+        self.assertIn("aane wala mark", result["answer"])
+        conn.close()
+
+    def test_party_size_over_invitation_is_saved_and_flagged_for_family(self):
+        conn = app.db()
+        session_id = self._guest_session(conn, "9000000079", "Divya")
+        result = app.guest_desk.guest_chat(conn, session_id, "Hum 4 log aayenge")
+        saved = conn.execute("SELECT rsvp_status,party_size FROM wedding_guests WHERE phone='9000000079'").fetchone()
+        inbox = app.guest_desk.family_inbox(conn)
+        self.assertEqual(tuple(saved), ("coming", 4))
+        self.assertTrue(result["escalated"])
+        self.assertEqual(len(inbox), 1)
+        self.assertIn("lists 2", inbox[0]["reason"])
+        self.assertIn("flag", result["answer"].lower())
+        conn.close()
+
+    def test_ok_and_thanks_are_acknowledged_without_family_escalation(self):
+        conn = app.db()
+        session_id = self._guest_session(conn, "9000000078", "Nila")
+        for message in ("ok", "thanks"):
+            result = app.guest_desk.guest_chat(conn, session_id, message)
+            self.assertFalse(result["escalated"], message)
+            self.assertEqual(app.guest_desk.family_inbox(conn), [])
+        conn.close()
+
+    def test_hinglish_schedule_answer_is_conversational_and_includes_date(self):
+        facts = {"sangeet_date": "2026-11-20", "sangeet_time": "2026-11-20 18:30"}
+        self.assertEqual(app.guest_desk._answer_fact("Sangeet ka time kya hai?", facts), "Sangeet 20 November 2026 ko 6:30 PM par hai.")
+        self.assertEqual(app.guest_desk._answer_fact("Tell me what time Sangeet starts", facts), "Sangeet is on 20 November 2026 at 6:30 PM.")
 
     def test_ambiguous_day_only_arrival_is_not_saved_and_goes_to_family(self):
         conn = app.db()

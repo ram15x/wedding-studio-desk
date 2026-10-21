@@ -45,6 +45,42 @@ def _find_column(headers: list[str], aliases: tuple[str, ...]) -> str | None:
 
 
 def init_schema(conn: sqlite3.Connection) -> None:
+    if getattr(conn, "dialect", "") == "postgres":
+        conn.execute("""CREATE TABLE IF NOT EXISTS wedding_guests (
+            id BIGSERIAL PRIMARY KEY,
+            name TEXT NOT NULL,
+            phone TEXT NOT NULL UNIQUE,
+            side TEXT NOT NULL DEFAULT '',
+            functions_json TEXT NOT NULL DEFAULT '[]',
+            function_responses_json TEXT NOT NULL DEFAULT '{}',
+            invited_count INTEGER NOT NULL DEFAULT 1,
+            rsvp_status TEXT NOT NULL DEFAULT 'pending' CHECK(rsvp_status IN ('pending','coming','not_coming')),
+            party_size INTEGER,
+            arrival_date TEXT,
+            arrival_mode TEXT,
+            arrival_time TEXT,
+            needs_room INTEGER NOT NULL DEFAULT 0,
+            needs_pickup INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT
+        )""")
+        conn.execute("CREATE TABLE IF NOT EXISTS wedding_facts (fact_key TEXT PRIMARY KEY, fact_value TEXT NOT NULL, updated_at TEXT NOT NULL)")
+        conn.execute("CREATE TABLE IF NOT EXISTS guest_sessions (session_id TEXT PRIMARY KEY, guest_id BIGINT NOT NULL REFERENCES wedding_guests(id), created_at TEXT NOT NULL)")
+        conn.execute("CREATE TABLE IF NOT EXISTS guest_messages (id BIGSERIAL PRIMARY KEY, session_id TEXT NOT NULL REFERENCES guest_sessions(session_id), role TEXT NOT NULL CHECK(role IN ('guest','desk','family')), body TEXT NOT NULL, created_at TEXT NOT NULL)")
+        conn.execute("""CREATE TABLE IF NOT EXISTS family_inbox (
+            id BIGSERIAL PRIMARY KEY,
+            session_id TEXT NOT NULL REFERENCES guest_sessions(session_id),
+            guest_id BIGINT NOT NULL REFERENCES wedding_guests(id),
+            question TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            reply TEXT,
+            status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','replied')),
+            created_at TEXT NOT NULL,
+            replied_at TEXT
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_guest_messages_session ON guest_messages(session_id, id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_family_inbox_status ON family_inbox(status, id DESC)")
+        conn.commit()
+        return
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS wedding_guests (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -138,10 +174,10 @@ def upload_guests(conn: sqlite3.Connection, content: bytes, filename: str) -> di
         raise ValueError("The guest list has duplicate phone numbers. Each guest needs a unique phone number.")
     conn.execute("BEGIN IMMEDIATE")
     try:
-        conn.execute("DELETE FROM wedding_guests")
-        conn.execute("DELETE FROM guest_sessions")
         conn.execute("DELETE FROM guest_messages")
         conn.execute("DELETE FROM family_inbox")
+        conn.execute("DELETE FROM guest_sessions")
+        conn.execute("DELETE FROM wedding_guests")
         conn.executemany("""INSERT INTO wedding_guests(name,phone,side,functions_json,invited_count)
                           VALUES(?,?,?,?,?)""", parsed)
         conn.commit()
@@ -244,7 +280,7 @@ def _extract_updates(text: str, guest) -> tuple[dict, list[str]]:
     low = text.lower()
     updates = {}
     notes = []
-    yes = re.search(r"\b(?:haan|han|yes|yep|yeah|coming|aa\s*rahe|aa\s*rahi|will attend|attending|count us in|we'll come|we will come)\b", low)
+    yes = re.search(r"\b(?:haan|han|yes|yep|yeah|coming|aa\s*rahe|aa\s*rahi|aayenge|aa\s*paayenge|aa\s*payenge|aaunga|aaungi|will attend|attending|count us in|we'll come|we will come)\b", low)
     no = re.search(
         r"\b(?:nahi|nahin|no|not coming|can't come|cannot come|can't attend|cannot attend|"
         r"can't make it|cannot make it|won't (?:make it|come|attend)|won't be able to (?:make it|come|attend)|"
@@ -253,17 +289,19 @@ def _extract_updates(text: str, guest) -> tuple[dict, list[str]]:
     )
     if yes and no and yes.start() < no.start():
         yes = None
+    # A party-size RSVP is an affirmative response even when the guest omits
+    # an explicit "yes" (for example, "hum 6 log aayenge").
+    count_match = re.search(r"\b(\d{1,2})\s*(?:log|people|persons|members|of us|jan(?:e)?|family members)\b|\b(?:we are|hum|family of)\s*(\d{1,2})\b", low)
+    count = int(count_match.group(1) or count_match.group(2)) if count_match else None
+    if count is None and re.search(r"\b(?:hum\s+dono|dono\s+(?:log|people)|both\s+of\s+us|we\s+both|the\s+two\s+of\s+us)\b", low):
+        count = 2
     if no:
         updates["rsvp_status"] = "not_coming"
         updates["party_size"] = 0
         notes.append("not_coming")
-    elif yes:
+    elif yes or count is not None:
         updates["rsvp_status"] = "coming"
         notes.append("coming")
-    count_match = re.search(r"\b(\d{1,2})\s*(?:log|people|persons|members|of us|jan(?:e)?|hum|family members)\b|\b(?:we are|hum|family of)\s*(\d{1,2})\b", low)
-    count = int(count_match.group(1) or count_match.group(2)) if count_match else None
-    if count is None and re.search(r"\b(?:hum\s+dono|dono\s+(?:log|people)|both\s+of\s+us|we\s+both|the\s+two\s+of\s+us)\b", low):
-        count = 2
     if count is not None and 1 <= count <= 30:
         updates["party_size"] = count
         notes.append("count")
@@ -289,15 +327,19 @@ def _extract_updates(text: str, guest) -> tuple[dict, list[str]]:
 
 
 def _function_updates(text: str, guest, updates: dict) -> tuple[dict, list[str]]:
-    status = updates.get("rsvp_status")
-    if status not in {"coming", "not_coming"}:
-        return updates, []
     low = text.lower()
     try:
         functions = json.loads(guest["functions_json"])
     except (KeyError, TypeError, json.JSONDecodeError):
         return updates, []
-    matched = [name for name in functions if re.search(r"(?<!\w)" + re.escape(name.lower()) + r"(?!\w)", low)]
+    aliases = {"wedding": ("shaadi", "shadi", "vivah"), "mehendi": ("mehndi",), "sangeet": (), "reception": (), "haldi": ()}
+    matched = []
+    for name in functions:
+        terms = (name.lower(),) + aliases.get(name.lower(), ())
+        for term in terms:
+            for match in re.finditer(r"(?<!\w)" + re.escape(term) + r"(?!\w)", low):
+                matched.append((match.start(), match.end(), name))
+    matched.sort(key=lambda item: item[0])
     if not matched:
         return updates, []
     previous = {}
@@ -305,10 +347,35 @@ def _function_updates(text: str, guest, updates: dict) -> tuple[dict, list[str]]
         previous = json.loads(guest["function_responses_json"] or "{}")
     except (KeyError, TypeError, json.JSONDecodeError):
         pass
-    previous.update({name: status for name in matched})
+    status_names = []
+    used_names = set()
+    for index, (start, end, name) in enumerate(matched):
+        if name in used_names:
+            continue
+        # Polarity is local to the event clause, ending at the next named
+        # function. This handles "shaadi mein ... reception nahi" correctly.
+        clause_start = max(low.rfind(mark, 0, start) for mark in (",", ";", ".")) + 1
+        next_start = min((item[0] for item in matched[index + 1:]), default=len(low))
+        clause = low[clause_start:next_start]
+        negative = bool(re.search(r"\b(?:nahi|nahin|not|no|can't|cannot|won't|unable|skip|miss)\b", clause))
+        positive = bool(re.search(r"\b(?:haan|han|yes|coming|aa\s*rahe|aa\s*rahi|aayenge|attend|join|participat)\b", clause))
+        status = "not_coming" if negative else ("coming" if positive else updates.get("rsvp_status"))
+        if status in {"coming", "not_coming"}:
+            previous[name] = status
+            status_names.append((status, name))
+            used_names.add(name)
+    if not status_names:
+        return updates, []
     updates.pop("rsvp_status", None)
     updates["function_responses_json"] = json.dumps(previous, ensure_ascii=False)
-    return updates, [status, ", ".join(matched)]
+    # Keep the most relevant status and list all affected functions for the
+    # concise confirmation. The database retains each function's own status.
+    distinct_statuses = {status for status, _ in status_names}
+    rendered_names = (
+        ", ".join(f"{name} ({'coming' if status == 'coming' else 'not coming'})" for status, name in status_names)
+        if len(distinct_statuses) > 1 else ", ".join(name for _, name in status_names)
+    )
+    return updates, ["mixed" if len(distinct_statuses) > 1 else status_names[0][0], rendered_names]
 
 
 def _arrival_time(text: str) -> str | None:
@@ -386,11 +453,67 @@ def _answer_fact(question: str, facts: dict[str, str]) -> str | None:
             and any(token in key.lower().replace("_", " ").split() for token in tokens)
         ]
     keys = list(dict.fromkeys(keys))
+    if keys and all(any(part in key.split("_") for part in ("date", "time", "schedule")) for key in keys):
+        return _schedule_sentence(keys, facts, _is_hinglish(question))
     if len(keys) == 1:
-        return f"{keys[0].replace('_',' ').title()}: {_format_fact(keys[0], facts[keys[0]])}"
+        label = keys[0].replace("_", " ")
+        value = _format_fact(keys[0], facts[keys[0]])
+        if _is_hinglish(question):
+            if any(word in label for word in ("venue", "location", "address")):
+                return f"Venue {value} hai."
+            return f"{label.title()} {value} hai."
+        if any(word in label for word in ("venue", "location", "address")):
+            return f"The venue is {value}."
+        return f"The {label} is {value}."
     if len(keys) > 1:
-        return "; ".join(f"{key.replace('_',' ').title()}: {_format_fact(key, facts[key])}" for key in keys[:5])
+        if _is_hinglish(question):
+            return "Aur details: " + "; ".join(f"{key.replace('_',' ').title()} { _format_fact(key, facts[key]) }" for key in keys[:5])
+        return "Here are the details: " + "; ".join(f"{key.replace('_',' ').title()}: {_format_fact(key, facts[key])}" for key in keys[:5])
     return None
+
+
+def _is_hinglish(text: str) -> bool:
+    return bool(re.search(r"\b(?:hai|hain|ho|kya|kab|kahan|kaise|kitne|mein|ko|se|aayenge|aaenge|aa rahe|aa rahi|hum|ham|nahi|nahin|haan|han|chahiye|batao|bataiye|shukriya|dhanyavaad)\b", text.lower()))
+
+
+def _schedule_sentence(keys: list[str], facts: dict[str, str], hinglish: bool) -> str:
+    """Render verified schedule rows as a short sentence, pairing date/time."""
+    event_names = []
+    for key in keys:
+        parts = key.split("_")
+        event = " ".join(part for part in parts if part not in {"date", "time", "schedule", "function", "at", "on"}).strip()
+        if event and event not in event_names:
+            event_names.append(event)
+    sentences = []
+    for event in event_names[:5]:
+        prefix = event.replace(" ", "_")
+        date_key = next((key for key in facts if key in {f"{prefix}_date", f"{prefix}_schedule_date"}), None)
+        time_key = next((key for key in facts if key in {f"{prefix}_time", f"{prefix}_schedule_time"}), None)
+        if not date_key and not time_key:
+            continue
+        date_source = facts[date_key] if date_key else (facts[time_key] if time_key else "")
+        embedded_date = re.search(r"\b20\d{2}-\d{2}-\d{2}\b", date_source)
+        date_value = _format_fact(date_key or f"{prefix}_date", embedded_date.group(0) if embedded_date else date_source) if date_key or embedded_date else None
+        time_value = _format_fact(time_key, facts[time_key]) if time_key else None
+        if date_value and time_value:
+            date_value = re.sub(r"\s+at\s+\d{1,2}:\d{2}$", "", date_value)
+            date_value = re.sub(r"\s+\d{1,2}:\d{2}$", "", date_value)
+            if hinglish:
+                sentences.append(f"{event.title()} {date_value} ko {time_value} par hai")
+            else:
+                sentences.append(f"{event.title()} is on {date_value} at {time_value}")
+        elif date_value:
+            sentences.append(f"{event.title()} {date_value} ko hai" if hinglish else f"{event.title()} is on {date_value}")
+        elif time_value:
+            sentences.append(f"{event.title()} ka time {time_value} hai" if hinglish else f"{event.title()} starts at {time_value}")
+    if not sentences:
+        return ""
+    return ". ".join(sentences) + "."
+
+
+def _is_acknowledgement(text: str) -> bool:
+    low = re.sub(r"[^a-z0-9 ]", " ", text.lower()).strip()
+    return bool(re.fullmatch(r"(?:ok|okay|k|got it|noted|thanks|thank you|thx|ty|cool|great|alright|all right|shukriya|dhanyavaad|nanri)(?: anna| bro| ji| da)?", low))
 
 
 def _format_fact(key: str, value: str) -> str:
@@ -456,6 +579,13 @@ def guest_chat(conn: sqlite3.Connection, session_id: str, text: str, model_inten
             if field not in updates and type(value) is bool:
                 updates[field] = int(value)
                 notes.append(field)
+    count_conflict = (
+        type(updates.get("party_size")) is int
+        and updates["party_size"] > int(guest["invited_count"])
+        and updates.get("rsvp_status") != "not_coming"
+    )
+    if count_conflict:
+        notes.append("count_conflict")
     # Resolve day-only dates only against dates the family uploaded.
     has_date = bool(re.search(r"\b20\d{2}[-/]\d{1,2}[-/]\d{1,2}\b|\b\d{1,2}\s*(?:ko|tarikh)\b|\b\d{1,2}(?:st|nd|rd|th)\b|\b\d{1,2}\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b", text.lower()))
     if has_date and re.search(r"\b(?:arriv|land|train|flight|pahunch|aaunga|aaungi|aunga|aungi|aayenge|aa\s*rahe|aa\s*rahi|coming)\b", text.lower()):
@@ -474,20 +604,35 @@ def guest_chat(conn: sqlite3.Connection, session_id: str, text: str, model_inten
         conn.execute(f"UPDATE wedding_guests SET {assignments},updated_at=? WHERE id=?", (*updates.values(), utc_now(), guest["id"]))
     if "ambiguous_arrival_date" in notes:
         conn.execute("INSERT INTO family_inbox(session_id,guest_id,question,reason,created_at) VALUES(?,?,?,?,?)", (session_id, guest["id"], text, "The arrival day could not be matched to exactly one date in the uploaded family schedule.", utc_now()))
+    if count_conflict:
+        conn.execute(
+            "INSERT INTO family_inbox(session_id,guest_id,question,reason,created_at) VALUES(?,?,?,?,?)",
+            (session_id, guest["id"], text,
+             f"Guest reported {updates['party_size']} people, but the invitation lists {guest['invited_count']}. Please confirm the party size with the family.", utc_now()),
+        )
     facts = _facts(conn)
     facts_answer = _answer_fact(text, facts)
     if not facts_answer and isinstance(model_intent, dict) and model_intent.get("intent") == "wedding_fact" and model_intent.get("confidence", 0) >= 0.85:
         fact_key = model_intent.get("fact_key")
         if isinstance(fact_key, str) and fact_key in facts:
-            facts_answer = f"{fact_key.replace('_', ' ').title()}: {_format_fact(fact_key, facts[fact_key])}"
+            facts_answer = _answer_fact(fact_key.replace("_", " "), facts) or f"The {fact_key.replace('_', ' ')} is {_format_fact(fact_key, facts[fact_key])}."
     if notes:
         parts = []
         first_name = guest["name"].split()[0]
-        if "coming" in notes: parts.append(f"Thanks, {first_name}! I've marked your group as coming")
-        if "not_coming" in notes: parts.append(f"Thanks, {first_name}. I've marked your group as unable to come")
+        hinglish = _is_hinglish(text)
+        if "coming" in notes: parts.append(f"Shukriya, {first_name}! Aapke group ko aane wala mark kar diya hai" if hinglish else f"Thanks, {first_name}! I've marked your group as coming")
+        if "not_coming" in notes: parts.append(f"Shukriya, {first_name}. Aapka group nahi aa raha mark kar diya hai" if hinglish else f"Thanks, {first_name}. I've marked your group as unable to come")
         if function_update:
-            parts.append(f"I've marked you as {'coming' if function_update[0] == 'coming' else 'unable to come'} for {function_update[1]}")
-        if "count" in notes: parts.append(f"I've noted {updates['party_size']} people in your group")
+            if function_update[0] == "mixed":
+                function_summary = function_update[1]
+                if hinglish:
+                    function_summary = function_summary.replace("(coming)", "(aayenge)").replace("(not coming)", "(nahi aa payenge)")
+                parts.append(("Aapka RSVP update: " if hinglish else "I've updated your RSVP: ") + function_summary)
+            elif hinglish:
+                parts.append(f"{function_update[1]} ke liye aapko {'aane wala' if function_update[0] == 'coming' else 'nahi aane wala'} mark kar diya hai")
+            else:
+                parts.append(f"I've marked you as {'coming' if function_update[0] == 'coming' else 'unable to come'} for {function_update[1]}")
+        if "count" in notes: parts.append(f"Aapke group mein {updates['party_size']} log note kiye hain" if hinglish else f"I've noted {updates['party_size']} people in your group")
         if "arrival_mode" in notes:
             arrival = f" by {updates['arrival_mode']}"
             if updates.get("arrival_date"):
@@ -495,27 +640,38 @@ def guest_chat(conn: sqlite3.Connection, session_id: str, text: str, model_inten
                 arrival += " on " + parsed_day.strftime("%d %B %Y").lstrip("0")
             if updates.get("arrival_time"):
                 arrival += " at " + updates["arrival_time"]
-            parts.append("I've noted that you'll arrive" + arrival)
+            if hinglish:
+                mode_hinglish = {"train": "train se", "flight": "flight se", "other": "safar karke"}.get(updates["arrival_mode"], updates["arrival_mode"])
+                date_text = ""
+                if updates.get("arrival_date"):
+                    parsed_day = date.fromisoformat(updates["arrival_date"])
+                    date_text = parsed_day.strftime("%d %B %Y").lstrip("0") + " ko "
+                parts.append(f"Aap {date_text}{mode_hinglish} aayenge")
+            else:
+                parts.append("I've noted that you'll arrive" + arrival)
         elif "arrival_date" in notes:
             parsed_day = date.fromisoformat(updates["arrival_date"])
-            parts.append("I've noted your arrival for " + parsed_day.strftime("%d %B %Y").lstrip("0"))
-        if "needs_room" in notes: parts.append("I've noted that you need a room" if updates["needs_room"] else "I've noted that you don't need a room")
-        if "needs_pickup" in notes: parts.append("I've noted that you need a pickup" if updates["needs_pickup"] else "I've noted that you don't need a pickup")
-        if "ambiguous_arrival_date" in notes: parts.append("I couldn't match that arrival day to one date in the family's schedule, so I've asked them to confirm it")
+            parts.append(("Aapki arrival " + parsed_day.strftime("%d %B %Y").lstrip("0") + " ke liye note kar di hai") if hinglish else "I've noted your arrival for " + parsed_day.strftime("%d %B %Y").lstrip("0"))
+        if "needs_room" in notes: parts.append(("Room chahiye note kar liya hai" if updates["needs_room"] else "Room nahi chahiye note kar liya hai") if hinglish else ("I've noted that you need a room" if updates["needs_room"] else "I've noted that you don't need a room"))
+        if "needs_pickup" in notes: parts.append(("Pickup chahiye note kar liya hai" if updates["needs_pickup"] else "Pickup nahi chahiye note kar liya hai") if hinglish else ("I've noted that you need a pickup" if updates["needs_pickup"] else "I've noted that you don't need a pickup"))
+        if "ambiguous_arrival_date" in notes: parts.append("Arrival date clear nahi thi, family se confirm karne ko bola hai" if hinglish else "I couldn't match that arrival day to one date in the family's schedule, so I've asked them to confirm it")
+        if count_conflict: parts.append("Aapne invited count se zyada log bataye hain; family se confirm karne ko flag kiya hai" if hinglish else "Your reported group is larger than the invited count, so I've flagged it for the family to confirm")
         reply = ". ".join(parts) + "."
         if facts_answer:
             reply += " " + facts_answer
-    elif re.search(r"\b(?:hi|hello|hey|hii|namaste|vanakkam|thanks|thank you)\b", text.lower()) and len(text.split()) <= 8:
+    elif re.search(r"\b(?:hi|hello|hey|hii|namaste|vanakkam)\b", text.lower()) and len(text.split()) <= 8:
         reply = f"Hi {guest['name'].split()[0]}! What would you like to know about the wedding?"
+    elif _is_acknowledgement(text):
+        reply = "Theek hai! Aur kisi cheez mein madad chahiye?" if _is_hinglish(text) else "You're welcome! Let me know if you need anything else."
     elif facts_answer:
         reply = facts_answer
     else:
         reason = "The uploaded family details do not answer this clearly."
         conn.execute("INSERT INTO family_inbox(session_id,guest_id,question,reason,created_at) VALUES(?,?,?,?,?)", (session_id, guest["id"], text, reason, utc_now()))
-        reply = "I couldn't confirm that from the family's details, so I've passed your message to them. They'll reply here."
+        reply = "Yeh baat family details mein nahi mili, maine family ko pooch liya hai. Reply yahin milega." if _is_hinglish(text) else "I couldn't confirm that from the family's details, so I've passed your message to them. They'll reply here."
     _log_message(conn, session_id, "desk", reply)
     conn.commit()
-    return {"answer": reply, "updated": updates, "escalated": "ambiguous_arrival_date" in notes or bool(not notes and not facts_answer and not re.search(r"\b(?:hi|hello|hey|hii|namaste|vanakkam|thanks|thank you)\b", text.lower()))}
+    return {"answer": reply, "updated": updates, "escalated": count_conflict or "ambiguous_arrival_date" in notes or bool(not notes and not facts_answer and not _is_acknowledgement(text) and not re.search(r"\b(?:hi|hello|hey|hii|namaste|vanakkam)\b", text.lower()))}
 
 
 def conversation(conn: sqlite3.Connection, session_id: str) -> list[dict]:
