@@ -10,7 +10,7 @@ A phone-friendly web chat and password-protected family desk for one wedding. Gu
 - Legacy Railway app (kept temporarily as a fallback while its database is not migrated): [guest chat](https://wedding-studio-desk-production.up.railway.app/) · [family desk](https://wedding-studio-desk-production.up.railway.app/family)
 - Source: [ram15x/wedding-studio-desk](https://github.com/ram15x/wedding-studio-desk)
 
-**Deployment note (21 October 2026):** the `af827af` source fixes are pushed to GitHub but are not yet live on Cloudflare. The public Worker remains available on its previous deployment. A narrowly scoped Cloudflare API token is needed to deploy the update.
+**Deployment note (21 October 2026):** commit `af827af` is live on Cloudflare Worker version `963825d7-25f7-4c33-9f39-bb1a6f2c3fad`. The Cloudflare Worker suite passes 8/8 tests. Post-deploy Chrome checks passed for greetings, venue and schedule lookups, acknowledgements, mixed Hinglish RSVP, count-only RSVP, and the over-invitation warning. The RSVP test used synthetic Asha Raman and left her demo party size at 6 (invited: 3), flagged for family confirmation. I did not visually verify the family inbox because the browser rejected its current Basic Auth session.
 
 The Cloudflare deployment is a prototype with a synthetic 20-guest dataset in D1. It has been exercised for venue lookup, schedule answers, RSVP updates, over-invite escalation, and a D1-backed chat that survived a Worker redeploy. It is not a production-data migration: the Railway SQLite database, chat history, and inbox have not been copied to Cloudflare. Do not upload real guest details or send the Cloudflare URL to wedding guests until data migration and the acceptance flow are verified.
 
