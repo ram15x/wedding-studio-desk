@@ -111,7 +111,7 @@ Only uploaded facts answer venue and schedule questions. A day-only arrival such
 
 ## Database and deployment
 
-The Python app stores guest rows, family facts, RSVP/travel updates, sessions, chats, family replies, holds, and owner inbox entries in SQLite by default. The legacy Railway service mounts `/data`. The Python code has a Supabase Postgres adapter, but the Railway data and this app are not currently connected to Supabase.
+The Python app stores guest rows, family facts, RSVP/travel updates, sessions, chats, family replies, holds, and owner inbox entries in SQLite by default. The legacy Railway service mounts `/data`. The Python code has a Supabase Postgres adapter, and a local connection check succeeded. The Cloudflare Worker is not connected to Supabase. The Supabase destination already contains records, and the Railway SQLite export was not obtained, so no source records were migrated.
 
 The Cloudflare Worker stores its corresponding demo records in D1. Cloudflare D1 is a separate database, not a connection to Railway SQLite or Supabase. The current D1 database contains only the synthetic demo list and facts. No live Railway records were migrated.
 
