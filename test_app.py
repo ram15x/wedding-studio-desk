@@ -19,6 +19,9 @@ class AssignmentDeskTests(unittest.TestCase):
         self.provider_env = mock.patch.dict(app.os.environ, {
             "OPENROUTER_API_KEYS": "", "OPENROUTER_API_KEY": "",
             "OPENROUTER_MODELS": "", "OPENROUTER_MODEL": "",
+            # Tests must use the temporary SQLite database above. app.db()
+            # prefers these production connection variables over DB_PATH.
+            "SUPABASE_DB_URL": "", "DATABASE_URL": "",
         })
         self.provider_env.start()
 

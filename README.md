@@ -133,9 +133,11 @@ Run the Python suite:
 py -3 -m unittest -v test_app.py
 ```
 
-The current suite has **78 passing tests**, including 15 natural English/Hinglish message scenarios and focused cases for mixed per-function RSVP, count-only attendance, over-invite flags, acknowledgements, schedule answers, upload validation, persistence, safe escalation, and family replies. The total also includes tests for the older Studio Desk booking helpers and a small Supabase SQL-adapter unit test; it is not 78 separate production workflows. The suite does not validate a live Postgres connection, every possible phrase, or every language.
+The current Python suite has **80 passing tests**, including 15 natural English/Hinglish message scenarios and focused cases for mixed per-function RSVP, count-only attendance, over-invite flags, acknowledgements, schedule answers, upload validation, persistence, safe escalation, and family replies. The test setup explicitly clears database URL variables so tests use their temporary SQLite database and cannot write to Supabase. The total also includes tests for the older Studio Desk booking helpers and a small Supabase SQL-adapter unit test; it is not 80 separate production workflows. The suite does not validate a live Postgres connection, every possible phrase, or every language.
 
-Run the Cloudflare Worker unit checks from `cloudflare/` with `npm test`. They cover count-only RSVP, mixed per-function RSVP, and schedule formatting. These are focused unit tests, not a full two-device/mobile production acceptance suite.
+Run the Cloudflare Worker unit checks from `cloudflare/` with `npm test`. The eight checks cover count-only RSVP, function-specific mixed RSVP, preserving a function decline during a later travel update, greeting fallback, language-aware venue wording, and schedule formatting. They are focused unit tests, not a full two-device/mobile production acceptance suite.
+
+The Cloudflare flow was also exercised locally against an isolated D1 database using only the repository's synthetic 20-guest list and wedding facts: 15 guest messages covered greetings, acknowledgements, mixed/count-only/declined/over-limit RSVPs, arrival and pickup needs, venue and schedule questions, and unsupported questions. The owner dashboard reflected the test RSVPs and pickup; an unsupported question was escalated, and an owner reply appeared in that guest's conversation. This local check did not change the hosted D1 database. It does not replace a fresh deployed run on a phone.
 
 ## Two-minute walkthrough
 

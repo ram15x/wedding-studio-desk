@@ -37,10 +37,10 @@ For local development, use `npm run db:local` and `npm run dev`. Wrangler create
 
 ## Verify and test
 
-Run the local Cloudflare tests:
+Run the Cloudflare unit checks:
 
 ```powershell
 npm test
 ```
 
-Check the deployed health endpoint and exercise guest, family, RSVP, arrival, facts, escalation and family-reply flows before using the URL with actual guests. Automated tests cover representative phrases, not every way a relative might write. Phone-number matching is not identity verification; there is no SMS or OTP.
+The current unit suite has eight checks for count-only RSVP, per-function mixed RSVP, preserving a function decline during a later travel update, greeting fallback, language-aware venue wording, and schedule formatting. A separate local D1 acceptance run used the synthetic 20-guest CSV and 8 wedding facts to exercise 15 realistic messages plus the family-reply round trip. It verified three different guest RSVP styles, an over-invitation flag, arrivals/pickup, schedule and venue answers, acknowledgement handling, and escalation. It did not alter the deployed database. Repeat the deployed flow and a phone check before using actual guest data; local tests do not prove the deployed build or physical-device behavior. Phone-number matching is not identity verification; there is no SMS or OTP.

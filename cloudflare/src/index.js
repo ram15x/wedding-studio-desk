@@ -3,6 +3,13 @@ const H = {
   "cache-control": "no-store",
 };
 const now = () => new Date().toISOString();
+function humanDate(value) {
+  const m = String(value || "").match(/^(20\d{2})-(\d{2})-(\d{2})/);
+  if (!m) return String(value || "");
+  return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).toLocaleDateString("en-IN", {
+    timeZone: "UTC", day: "numeric", month: "long", year: "numeric",
+  });
+}
 const json = (d, s = 200, headers = {}) =>
   new Response(JSON.stringify(d), { status: s, headers: { ...H, ...headers } });
 const html = (s, headers = {}) =>
@@ -153,6 +160,12 @@ async function log(db, sid, role, text) {
 function factsRows(facts) {
   return Object.entries(facts);
 }
+function isConversationalGreeting(text) {
+  const normalized = norm(text);
+  const greetingStart = /^(hi+|hello+|hey+|heya|namaste|vanakkam)\b/.test(normalized);
+  const asksWeddingDetail = /\b(venue|address|location|date|time|mehendi|mehndi|sangeet|wedding|reception|booking|package|price|rate|balance|album|train|flight|pickup|room|coming|attending)\b/.test(normalized);
+  return greetingStart && normalized.split(" ").length <= 8 && !asksWeddingDetail;
+}
 function factAnswer(text, facts, language = "english") {
   const q = norm(text),
     policy =
@@ -206,7 +219,13 @@ function factAnswer(text, facts, language = "english") {
   }
   if (exact.some(([k]) => /date|time|schedule/.test(norm(k))))
     return groundedFactReply(exact.map(([k]) => k), facts, language);
-  return exact.map(([k, v]) => `${k}: ${v}`).join(". ");
+  return exact.map(([k, v]) => {
+    const key = norm(k);
+    if (/venue|address|location/.test(key))
+      return language === "english" ? `The venue is ${v}.` : `Venue ${v} hai.`;
+    const label = k.replace(/[_-]+/g, " ").replace(/\b\w/g, (x) => x.toUpperCase());
+    return language === "english" ? `${label}: ${v}.` : `${label} ${v} hai.`;
+  }).join(" ");
 }
 function groundedFactReply(keys, facts, language = "english") {
   const items = keys.map((k) => [k, facts[k]]).filter(([, v]) => v);
@@ -259,10 +278,6 @@ function parseRsvp(text, g, facts, intent = null) {
         q,
       );
   if (m && !yes && !no) yes = true;
-  if (yes || no) {
-    for (const f of invited) resp[f] = no && !yes ? "not_coming" : "coming";
-    notes.push("rsvp");
-  }
   const aliasesFor = (f) => {
     const a = [norm(f)];
     if (/wedding/i.test(f)) a.push("shaadi", "shadi", "wedding");
@@ -278,6 +293,19 @@ function parseRsvp(text, g, facts, intent = null) {
         .filter((x) => x.at >= 0),
     )
     .sort((a, b) => a.at - b.at);
+  // A general yes/no applies to every invited function only when the guest
+  // did not name a particular function. In a mixed RSVP, leave other events
+  // unchanged instead of silently marking them as coming.
+  if ((yes || no) && !mentions.length) {
+    const previous = JSON.parse(g.function_responses_json || "{}");
+    for (const f of invited) {
+      // A later logistics update should not silently reverse an explicit
+      // function-level decline (for example, reception is still a no).
+      if (yes && !no && previous[f]) continue;
+      resp[f] = no && !yes ? "not_coming" : "coming";
+    }
+    notes.push("rsvp");
+  }
   for (const f of invited) {
     const own = mentions.filter((x) => x.f === f);
     if (!own.length) continue;
@@ -391,8 +419,8 @@ async function chat(db, sid, text, env) {
   const facts = Object.fromEntries(fr.map((x) => [x.fact_key, x.fact_value]));
   const intent = await modelIntent(text, g, facts, env);
   const lang = intent?.language || (/\b(hum|haan|hai|nahi|nahin|aayenge|aa rahe|kahan|kab|chahiye|log|se)\b/i.test(text) ? "hinglish" : "english");
-  if (/^(hi+|hello+|hey+|namaste|vanakkam)[.!\s😊👋]*$/i.test(text) || intent?.kind === "greeting") {
-    const a = lang === "english" ? `Hi ${g.name.split(" ")[0]}! What would you like to know about the wedding?` : `Namaste ${g.name.split(" ")[0]}! Shaadi ke baare mein kya poochna chahenge?`;
+  if (isConversationalGreeting(text) || intent?.kind === "greeting") {
+    const a = lang === "english" ? `Hi ${g.name.split(" ")[0]}! I'm doing well, thanks. What can I help you with?` : `Namaste ${g.name.split(" ")[0]}! Main theek hoon, dhanyavaad. Shaadi ke baare mein kya poochna chahenge?`;
     await log(db, sid, "desk", a);
     return { answer: a, updated: {}, escalated: false };
   }
@@ -464,19 +492,21 @@ async function chat(db, sid, text, env) {
     );
   if (p.notes.includes("arrival_mode"))
     parts.push(
-      `${u.arrival_mode} noted${u.arrival_date ? ` for ${u.arrival_date}` : ""}.`,
+      h
+        ? `${u.arrival_date ? `${humanDate(u.arrival_date)} ko ` : ""}${u.arrival_mode} se aa rahe hain.`
+        : `I've noted your arrival by ${u.arrival_mode}${u.arrival_date ? ` on ${humanDate(u.arrival_date)}` : ""}.`,
     );
   if (p.notes.includes("needs_room"))
     parts.push(
-      u.needs_room
-        ? "I've noted that you need a room."
-        : "I've noted that you don't need a room.",
+      h
+        ? u.needs_room ? "Room chahiye, note kar liya hai." : "Room nahi chahiye, note kar liya hai."
+        : u.needs_room ? "I've noted that you need a room." : "I've noted that you don't need a room.",
     );
   if (p.notes.includes("needs_pickup"))
     parts.push(
-      u.needs_pickup
-        ? "I've noted that you need a pickup."
-        : "I've noted that you don't need a pickup.",
+      h
+        ? u.needs_pickup ? "Pickup chahiye, note kar liya hai." : "Pickup nahi chahiye, note kar liya hai."
+        : u.needs_pickup ? "I've noted that you need a pickup." : "I've noted that you don't need a pickup.",
     );
   if (over)
     parts.push(
@@ -751,4 +781,4 @@ export default {
     return json({ error: "Not found." }, 404);
   },
 };
-export { parseRsvp, groundedFactReply, factAnswer };
+export { parseRsvp, groundedFactReply, factAnswer, isConversationalGreeting };
