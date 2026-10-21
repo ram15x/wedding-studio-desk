@@ -2,8 +2,6 @@ services:
   - type: web
     name: wedding-studio-desk
     runtime: python
-    # Preview only. Render Free has ephemeral storage; do not use this setup
-    # for family data that must survive restarts or deploys.
     plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: python app.py
@@ -11,7 +9,9 @@ services:
     envVars:
       - key: ASSIGNMENT_HOST
         value: 0.0.0.0
-      - key: ASSIGNMENT_PORT
-        value: 10000
       - key: OWNER_PASSWORD
+        sync: false
+      - key: SUPABASE_DB_URL
+        sync: false
+      - key: OPENROUTER_API_KEYS
         sync: false
