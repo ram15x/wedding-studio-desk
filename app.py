@@ -205,7 +205,6 @@ def db() -> sqlite3.Connection:
         conn.execute("ALTER TABLE escalations ADD COLUMN reply TEXT")
     if "reply_created_at" not in escalation_columns:
         conn.execute("ALTER TABLE escalations ADD COLUMN reply_created_at TEXT")
-    import guest_desk
     guest_desk.init_schema(conn)
     conn.commit()
     return conn
