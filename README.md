@@ -4,11 +4,13 @@ A phone-friendly web chat and password-protected family desk for one wedding. Gu
 
 ## Live demo
 
-- Guest chat: [wedding-studio-desk-production.up.railway.app](https://wedding-studio-desk-production.up.railway.app/)
-- Family desk: [wedding-studio-desk-production.up.railway.app/family](https://wedding-studio-desk-production.up.railway.app/family) (also `/owner`)
+- Cloudflare guest chat: [ishqweds-guest-desk.ramnarayanan155-68f.workers.dev](https://ishqweds-guest-desk.ramnarayanan155-68f.workers.dev/)
+- Cloudflare family desk: add `/family` to the Cloudflare URL; sign in with username `owner` and the Cloudflare `OWNER_PASSWORD` secret.
+- Cloudflare health: append `/health`.
+- Legacy Railway app (kept temporarily as a fallback while its database is not migrated): [guest chat](https://wedding-studio-desk-production.up.railway.app/) · [family desk](https://wedding-studio-desk-production.up.railway.app/family)
 - Source: [ram15x/wedding-studio-desk](https://github.com/ram15x/wedding-studio-desk)
 
-The family desk uses HTTP Basic Authentication: username `owner`, password from `OWNER_PASSWORD`. Railway currently uses SQLite on a volume mounted at `/data`; the Supabase Postgres option is prepared in code but is not connected or migrated yet.
+The Cloudflare deployment is a prototype with a synthetic 20-guest dataset in D1. It has been exercised for venue lookup, schedule answers, RSVP updates, over-invite escalation, and a D1-backed chat that survived a Worker redeploy. It is not a production-data migration: the Railway SQLite database, chat history, and inbox have not been copied to Cloudflare. Do not upload real guest details or send the Cloudflare URL to wedding guests until data migration and the acceptance flow are verified.
 
 ## What it does
 
@@ -24,11 +26,11 @@ This is a single-wedding prototype. Uploading another guest list replaces the cu
 
 ## How OpenRouter is used
 
-OpenRouter is optional. When available, it interprets natural wording and maps a question to one or more keys from the uploaded family sheet, or extracts RSVP details such as function, attendance, and travel. This is meant to handle different wording and multi-part questions without a list of exact canned questions. The app validates the selected keys and reads the answer values from the database; the model never supplies wedding facts or updates records. If the model fails or is uncertain, deterministic parsing is used and unsupported questions go to the family. The fallback is narrower, so a configured key alone does not prove that the provider is responding: the model IDs must be valid and the account must have usable access or credits.
+OpenRouter is configured on the Cloudflare Worker as an optional intent parser. It receives a redacted message plus allowed function names and fact-key names, and returns a classification. The Worker validates the result; actual RSVP records and wedding facts come from D1. The model does not write records or provide the wedding answer. If the provider times out, returns invalid JSON, or is rate-limited, deterministic parsing is used and unsupported questions go to the family. The Worker uses OpenRouter's free router, whose provider availability and quota can change; one key is used per request. The three configured keys are stored as encrypted Cloudflare Worker secrets, but multiple keys on the same OpenRouter account do not multiply its account-level free quota.
 
 The app attempts to redact guest names and phone numbers before sending the message, but redaction is best-effort. Message text, allowed function names, and wedding-fact key names may be sent to OpenRouter; guest-list rows and fact values are not sent. Do not use real guest information with an external provider unless the family has approved that disclosure.
 
-Keys and model IDs are paired by position. Add them to `.env.local` locally or Railway service variables. Never commit keys or put them in screenshots, source files, or chat.
+For the Python app, keys and model IDs are paired by position in `.env.local` or the Railway service variables. For Cloudflare, `OPENROUTER_API_KEYS` is a Worker secret and `OPENROUTER_MODELS` is a non-secret Worker variable. Never commit keys or put them in screenshots, source files, or chat.
 
 ```text
 OPENROUTER_API_KEYS=<key-1>,<key-2>,<key-3>
@@ -107,35 +109,33 @@ Only uploaded facts answer venue and schedule questions. A day-only arrival such
 
 ## Database and deployment
 
-By default, the app stores guest rows, family facts, RSVP and travel updates, sessions, chats, family replies, holds, and owner inbox entries in SQLite. Railway currently mounts `/data` and stores the database there. The code also supports Supabase Postgres: set `SUPABASE_DB_URL` (or `DATABASE_URL`) to a Supabase Postgres connection string. If configured, Postgres is used and connection failures do not silently fall back to SQLite.
+The Python app stores guest rows, family facts, RSVP/travel updates, sessions, chats, family replies, holds, and owner inbox entries in SQLite by default. The legacy Railway service mounts `/data`. The Python code has a Supabase Postgres adapter, but the Railway data and this app are not currently connected to Supabase.
 
-### Moving Railway data to Supabase
+The Cloudflare Worker stores its corresponding demo records in D1. Cloudflare D1 is a separate database, not a connection to Railway SQLite or Supabase. The current D1 database contains only the synthetic demo list and facts. No live Railway records were migrated.
 
-Supabase is **not connected yet**: there is no Supabase connection setting in the local environment and the Railway SQLite export has not been obtained. Safe migration steps:
+### Before removing the legacy Railway service
 
-1. Create a Supabase project and copy its Postgres connection string from **Project → Connect**. Keep the password private.
-2. Export/download the current Railway `/data/wedding_guest_desk.db`. Keep the Railway volume attached until migration is verified.
-3. Set `SUPABASE_DB_URL` locally and run `python migrate_sqlite_to_supabase.py <path-to-exported-db>`. The script refuses to write if any destination table already contains data.
-4. Verify guest rows, family facts, RSVP counts, conversations, inbox items, holds, and replies.
-5. Set `SUPABASE_DB_URL` in Railway Variables and deploy. Re-test before removing the old volume.
+The Railway volume download previously failed with an SFTP timeout. Its production database has not been exported, imported, or compared with the D1 database. Keep the Railway service and volume until the data is confirmed disposable or a verified export exists. The old local Supabase migration path is not used by the Cloudflare Worker.
 
-The migration needs both the connection string and the SQLite export. Setting the new variable without migrating would start with empty Postgres tables. PostgreSQL has not yet been tested against a live Supabase project.
+The current Cloudflare release uses Worker `ishqweds-guest-desk` and D1 database `ishqweds-guest-desk`. Deploy from `cloudflare/` with `npm install`, `npm test`, and `npx wrangler deploy`. Apply future schema migrations with `npm run db:remote`. Do not upload a replacement guest list to a live event without exporting current sessions and inbox items first; the replacement import clears those records.
 
-Moving the database does not move the web server. Railway’s current trial terms state Trial volumes are deleted 30 days after trial credits expire; after that the Free plan provides $1 monthly credit. Supabase Free projects can also pause after low activity over seven days and have a database quota. Therefore, moving the database alone does not guarantee that the hosted app stays online through wedding season. Check [Railway trial terms](https://docs.railway.com/pricing/free-trial), [Supabase project pausing](https://supabase.com/docs/guides/platform/free-project-pausing), and [Supabase database limits](https://supabase.com/docs/guides/platform/database-size).
+Cloudflare is request-driven and keeps state in D1, so it does not depend on the development computer staying on. This deployment is subject to Cloudflare Worker and D1 plan quotas. Check current plan limits before relying on it for a real wedding.
 
-The connected Railway service deploys from this repository’s `main` branch. After a push, verify the deployment is **Active** before relying on the new behavior. If Railway builds are paused, wait until they resume and deploy the latest commit. The optional `render.yaml` is only for preview; Render Free filesystems are ephemeral and do not satisfy the persistence requirement.
+Phone-number matching is not identity verification. There is no SMS or OTP. Owner routes are protected by Basic Auth. OpenRouter intent parsing is an external request; message text is redacted best-effort, and function/fact-key names are sent, but wedding facts and guest rows are not. Do not put real data in the demo until the event owner has approved the external processing.
 
 Set a strong private `OWNER_PASSWORD` in Railway Variables. Do not commit `.env.local`, passwords, API keys, or real family data. Phone-number matching does not authenticate ownership.
 
 ## Tests
 
-Run the local suite:
+Run the Python suite:
 
 ```powershell
 py -3 -m unittest -v test_app.py
 ```
 
 The current suite has **78 passing tests**, including 15 natural English/Hinglish message scenarios and focused cases for mixed per-function RSVP, count-only attendance, over-invite flags, acknowledgements, schedule answers, upload validation, persistence, safe escalation, and family replies. The total also includes tests for the older Studio Desk booking helpers and a small Supabase SQL-adapter unit test; it is not 78 separate production workflows. The suite does not validate a live Postgres connection, every possible phrase, or every language.
+
+Run the Cloudflare Worker unit checks from `cloudflare/` with `npm test`. They cover count-only RSVP, mixed per-function RSVP, and schedule formatting. These are focused unit tests, not a full two-device/mobile production acceptance suite.
 
 ## Two-minute walkthrough
 
