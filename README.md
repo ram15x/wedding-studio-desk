@@ -11,6 +11,18 @@ A phone-friendly web chat for wedding guests, with a password-protected family d
 
 The family desk uses HTTP Basic Auth. Username: `owner`; password is the encrypted Cloudflare `OWNER_PASSWORD` secret. Guest login matches a listed phone number; it does not send an SMS code.
 
+## Quick demo test for the founder
+
+Use the synthetic demo roster; do not enter real guest information. These demo phone numbers are in `data/demo_guest_list.csv` and are not OTP-verified.
+
+1. Open the [guest chat](https://ishqweds-guest-desk.ramnarayanan155-68f.workers.dev/) and continue with Asha's demo number, `9000000001`.
+2. Send `Hum 2 log aayenge shaadi mein, reception nahi aa paayenge`. The chat should acknowledge the RSVP; in the family desk, Wedding should be coming, Reception not coming, and the party size should be 2.
+3. Start a separate guest session with Meena's demo number, `9000000003`, and send `Hum 2 log aa rahe hain, flight se 20 Nov ko. Room chahiye aur pickup bhi.` Check that the family desk shows the arrival date, flight, room, and pickup.
+4. From a guest session, ask something absent from the wedding sheet, such as `Can we bring our dog to the wedding?`. It should be sent to the family inbox without guessing. Sign in at `/family`, reply to that item, then refresh the same guest chat and confirm the family reply appears.
+5. Refresh the family desk and check the headcounts and pickup list. The health page should report `status: ok` and 20 guests.
+
+The family password is managed as a Cloudflare secret and is not included here. Ask the project owner for it before the demo. The live inbox currently contains a synthetic open test question, “We are all set for the wedding.”; it is the failed ambiguous-intent test described below, not a real guest request.
+
 ## What I checked on 22 October 2026
 
 The active Cloudflare Worker version is `3d67a6c8-218a-44f6-bac4-08ff3008a225`. It uses Supabase PostgreSQL through Cloudflare Hyperdrive. I uploaded the repository's synthetic 20-guest CSV and wedding-details CSV to the live import endpoints, then ran the RSVP and reply checks below. The CSV upload endpoint accepted all 20 rows; the browser's file chooser could not be used because the Chrome extension blocks local-file access, so a fresh upload through the visible file picker is still unverified.
@@ -21,7 +33,7 @@ The active Cloudflare Worker version is `3d67a6c8-218a-44f6-bac4-08ff3008a225`. 
 | “Hum 6 log aayenge” | Karthik was marked coming for his invited functions and the party size became 6. Because his invitation listed 2, the family inbox flagged the difference. |
 | “Hum 2 log aa rahe hain, flight se 20 Nov ko. Room chahiye aur pickup bhi.” | Meena's row showed 2 people, a 20 November 2026 flight, a room request, and a pickup request. The dashboard headcount and pickup list reflected the update. |
 | “Venue kahan hai?” | The chat answered from the uploaded sheet: Lotus Convention Centre, 12 Park Road, Coimbatore. |
-| “Can we bring our dog to the wedding?” | The chat did not guess. It sent the question to the family inbox. A family reply sent from the family desk appeared in Karthik's guest conversation; a separate reply round-trip was also checked through the live API. |
+| “Can we bring our dog to the wedding?” | The chat did not guess. It sent the question to the family inbox. A family reply sent from the family desk appeared in the same synthetic guest's conversation; a separate reply round-trip was also checked through the live API. |
 
 I redeployed the Worker after those updates. The health endpoint still reported 20 guests, and the RSVP counts, travel details, inbox items, and family reply remained in Supabase afterward. That verifies this deployment did not reset the database.
 
