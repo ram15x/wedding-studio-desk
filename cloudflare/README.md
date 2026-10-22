@@ -25,7 +25,7 @@ Recent model requests returned rate-limit errors. The Worker now avoids calling 
 
 The latest live check (“We are all set for the wedding”) still escalated to the family. It is not recognized by the deterministic parser, so the model-assisted classification gate has not passed.
 
-A separate synthetic request to OpenRouter's `openrouter/free` router returned HTTP 200 from MiniMax M3.1 Flash, but not the requested classification JSON. That router was not enabled in production.
+A separate synthetic request to OpenRouter's `openrouter/free` router returned HTTP 200 from MiniMax M3.1 Flash, but a simple check did not find the expected `kind` and `attendance` fields. That router was not enabled in production.
 
 ## Deploy
 
