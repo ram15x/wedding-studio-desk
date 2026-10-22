@@ -7,7 +7,8 @@ The hosted Ishqweds app runs as a Cloudflare Worker and stores wedding data in S
 - Guest chat: https://ishqweds-guest-desk.ramnarayanan155-68f.workers.dev/
 - Family desk: https://ishqweds-guest-desk.ramnarayanan155-68f.workers.dev/family
 - Health: https://ishqweds-guest-desk.ramnarayanan155-68f.workers.dev/health
-- Current verified Worker version (22 Oct 2026): `3d67a6c8-218a-44f6-bac4-08ff3008a225`
+- Active Worker version seen in the Cloudflare dashboard (22 Oct 2026): `3d67a6c8-218a-44f6-bac4-08ff3008a225`
+- Latest source commit pushed to GitHub (22 Oct 2026): `1ff12ca` — it is **not deployed to the Worker yet**.
 
 The family desk uses HTTP Basic Auth with username `owner` and the encrypted Cloudflare secret `OWNER_PASSWORD`. Guest login matches the submitted phone number to the guest list; it does not send an SMS or OTP.
 
@@ -24,6 +25,8 @@ The live synthetic guest list was freshly imported through the Worker upload end
 Recent model requests returned rate-limit errors. The Worker now avoids calling OpenRouter for clear greetings, acknowledgements, deterministic RSVP updates, and directly answerable wedding facts. Ambiguous messages still rely on the model and safely escalate when classification fails. Do not describe free-tier model handling as reliable until live paraphrase tests pass without rate-limit failures.
 
 The latest live check (“We are all set for the wedding”) still escalated to the family. It is not recognized by the deterministic parser, so the model-assisted classification gate has not passed.
+
+The Cloudflare settings page confirms that `OPENROUTER_API_KEYS` is present as an encrypted secret and `OPENROUTER_MODELS` is set to `google/gemma-4-31b-it:free`. That confirms configuration exists, not that the key is valid or that the provider returns usable intent. On 22 Oct, the live message “You can count our family in for the big day” still went to the family inbox. The model-assisted paraphrase test therefore **failed live**; local tests use mocked OpenRouter responses.
 
 A separate synthetic request to OpenRouter's `openrouter/free` router returned HTTP 200 from MiniMax M3.1 Flash, but a simple check did not find the expected `kind` and `attendance` fields. That router was not enabled in production.
 
@@ -42,6 +45,8 @@ Set `OWNER_PASSWORD` and `OPENROUTER_API_KEYS` as Cloudflare Worker secrets. Kee
 
 ## Tests and current limits
 
-`npm test` runs 26 Cloudflare tests, including PostgreSQL adapter checks and a 15-message realistic RSVP/fact matrix. All 26 passed in the 22 Oct 2026 QA run. The matrix is automated; it is not proof that every message was manually entered in production. Live checks confirmed the mixed RSVP, count-only/over-invite warning, arrival/flight/room/pickup update, grounded venue answer, unknown-question escalation, family reply in the guest chat, and survival across one redeployment.
+`npm test` runs 29 Cloudflare tests, including PostgreSQL adapter checks and a 15-message realistic RSVP/fact matrix. All 29 pass locally. The matrix is automated; it is not proof that every message was manually entered in production. Live checks confirmed the mixed RSVP, count-only/over-invite warning, arrival/flight/room/pickup update, grounded venue answer, unknown-question escalation, family reply in the guest chat, and survival across one redeployment.
+
+The latest source also makes RSVP confirmations more specific and conversational, for example: “Got it—I’ve got 2 of you down for the wedding, and noted that you can’t make the reception.” Those wording changes are covered by local tests but remain **unverified on the live Worker** until a new deployment is made.
 
 The two-minute recording is handled by the owner. No WhatsApp integration or SMS OTP is configured. A physical-phone test and fresh file selection through the browser remain to be repeated.

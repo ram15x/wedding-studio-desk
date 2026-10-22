@@ -51,6 +51,8 @@ The current source now builds RSVP confirmations from the guest's actual update:
 
 The reply-quality change is covered by the Worker tests, but it has **not been verified in the live deployment yet**. Live OpenRouter behavior also remains unverified: earlier live requests were rate-limited or escalated, while the latest test run only exercises mocked model responses. Do not treat local test success as proof that the live OpenRouter keys or model are working.
 
+On 22 Oct, the Cloudflare dashboard still showed Worker version `3d67a6c8` active, and the live message “You can count our family in for the big day” escalated to the family. GitHub has the newer source, but this update still needs a Cloudflare deployment and a repeat live test.
+
 The demo roster and wedding details are fictional. The app handles supported wedding questions and RSVP updates; it cannot promise to answer every possible message. When the available details do not support an answer, it sends the question to the family.
 
 ## Run and test the Worker
