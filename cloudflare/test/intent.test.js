@@ -223,10 +223,10 @@ test("natural-language intent can update a mixed RSVP without exact phrase rules
 });
 
 test("a plan mentioning wedding is not treated as a wedding-fact question", () => {
-  assert.equal(
-    directFactQuestion("We would love to join the mehendi and wedding, but have a prior commitment for sangeet."),
-    false,
-  );
+  for (const message of [
+    "We would love to join the mehendi and wedding, but have a prior commitment for sangeet.",
+    "We're planning to come for the mehendi and wedding, just 2 of us, but we can't make it to the sangeet.",
+  ]) assert.equal(directFactQuestion(message), false, message);
   assert.equal(directFactQuestion("When is the wedding?"), true);
 });
 
