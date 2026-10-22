@@ -1,6 +1,6 @@
-# Wedding Guest Desk
+# Ishqweds Wedding Guest Desk
 
-A phone-friendly web chat and password-protected family desk for one wedding. Guests RSVP, update party size and travel needs, and ask about venue or function details. Unsupported facts go to the family instead of being guessed.
+A phone-friendly web chat for wedding guests, with a password-protected family desk. Guests can RSVP, share arrival details, ask about facts in the family sheet, and get a family reply when the sheet cannot answer. The desk does not invent wedding details.
 
 ## Live demo
 
@@ -9,68 +9,49 @@ A phone-friendly web chat and password-protected family desk for one wedding. Gu
 - Health: https://ishqweds-guest-desk.ramnarayanan155-68f.workers.dev/health
 - Source: https://github.com/ram15x/wedding-studio-desk
 
-On 22 October 2026, the Worker was updated to source commit `ddcb57f` and the active version is `d194601a` (100% traffic). It uses Supabase PostgreSQL through Cloudflare Hyperdrive and the `google/gemma-4-31b-it:free` intent model setting. The family dashboard currently shows the 20 synthetic guests and their RSVP/travel rows. This audit did not freshly upload a guest list; replacing it clears sessions, messages, and inbox entries. The data is synthetic; Railway and old D1 data were not migrated.
+The family desk uses HTTP Basic Auth. Username: `owner`; password is the encrypted Cloudflare `OWNER_PASSWORD` secret. Guest login matches a listed phone number; it does not send an SMS code.
 
-Live checks: Asha’s mixed Hinglish reply updates Wedding/Mehendi as coming, Sangeet/Reception as not coming, and records 2 people; the family dashboard shows those per-function states. The founder’s count-only example and over-invite warning are visible for Karthik. The exact previously failing English statement (“We're planning to come for the mehendi and wedding, just 2 of us, but we can't make it to the sangeet.”) now updates correctly in production. A different natural phrase (“You can count us in for the wedding.”) still escalated instead of being understood. A minimal test with the two local OpenRouter keys showed one key rate-limited and the other returned valid JSON using the configured Gemma model. The encrypted Cloudflare OpenRouter secret could not be updated with the expired/rejected deployment token, so live LLM intent handling is not yet proven. A physical-phone retest was not performed in this audit. Replacing the guest list clears sessions, messages, and inbox entries.
+## What I checked on 22 October 2026
 
-The local OpenRouter file has two API keys that authenticate successfully. One received HTTP 429 from the free model route; the other produced a valid RSVP JSON response from `google/gemma-4-31b-it:free`. The Worker’s existing encrypted secret is still the older value; the latest deployment token was rejected when updating it. Do not treat the model setting or a valid local key as proof that production LLM classification works.
+The active Cloudflare Worker version is `3d67a6c8-218a-44f6-bac4-08ff3008a225`. It uses Supabase PostgreSQL through Cloudflare Hyperdrive. I uploaded the repository's synthetic 20-guest CSV and wedding-details CSV to the live import endpoints, then ran the RSVP and reply checks below. The CSV upload endpoint accepted all 20 rows; the browser's file chooser could not be used because the Chrome extension blocks local-file access, so a fresh upload through the visible file picker is still unverified.
 
-## Features and limits
+| Guest message | Observed result |
+| --- | --- |
+| “Hum 2 log aayenge shaadi mein, reception nahi aa paayenge” | Asha's Wedding response became coming, Reception became not coming, and the party size became 2. The family dashboard showed those separate answers. |
+| “Hum 6 log aayenge” | Karthik was marked coming for his invited functions and the party size became 6. Because his invitation listed 2, the family inbox flagged the difference. |
+| “Hum 2 log aa rahe hain, flight se 20 Nov ko. Room chahiye aur pickup bhi.” | Meena's row showed 2 people, a 20 November 2026 flight, a room request, and a pickup request. The dashboard headcount and pickup list reflected the update. |
+| “Venue kahan hai?” | The chat answered from the uploaded sheet: Lotus Convention Centre, 12 Park Road, Coimbatore. |
+| “Can we bring our dog to the wedding?” | The chat did not guess. It sent the question to the family inbox. A family reply sent from the family desk appeared in Karthik's guest conversation; a separate reply round-trip was also checked through the live API. |
 
-- Imports guest rows (name, phone, side, functions, invited people) and wedding facts (item,value).
-- Phone matching does not send or verify SMS. There is no WhatsApp integration.
-- Records RSVP, party size, arrival date/mode, room requests, and pickup requests.
-- Shows per-function coming, not coming, and pending counts, plus arrivals, pickups, and room requests.
-- Answers venue and schedule questions from uploaded facts. Unknown questions go to the family inbox; family replies can appear in the same guest chat.
-- Mixed RSVP updates functions separately; party size above the invitation count is flagged for family review.
-- “ok” and “thanks” are handled conversationally. Common English and Latin-script Hinglish are tested, not every phrase or language.
-- Replacing the guest list clears sessions, messages, and inbox entries.
+I redeployed the Worker after those updates. The health endpoint still reported 20 guests, and the RSVP counts, travel details, inbox items, and family reply remained in Supabase afterward. That verifies this deployment did not reset the database.
 
-## OpenRouter
+## What still needs checking
 
-OpenRouter classifies intents; it receives redacted message text and allowed function/fact-key names. RSVP values and wedding facts come from PostgreSQL; the model does not write records or supply facts. The active Worker’s model setting is Gemma 4 31B IT Free. Production still has an older encrypted key value that could not be verified or replaced during this pass. One novel RSVP phrase escalated live, so do not claim the model is working reliably until the encrypted secret is updated and that test passes. Deterministic parsing handles supported patterns; unclear messages should escalate. It is not a general-purpose answer bot, and multiple keys from one account do not multiply its quota. Redaction is best-effort.
+- A real phone retest is still needed. The owner previously reported that the site works on their phone; I did not independently use a physical phone in this QA run.
+- The OpenRouter key secret is stored in Cloudflare and the Worker is configured for `google/gemma-4-31b-it:free`. Recent model requests hit rate limits, and three natural RSVP paraphrases escalated instead of being understood. The code now skips model calls for greetings, acknowledgements, clear deterministic RSVPs, and facts it can answer directly. Ambiguous wording still depends on OpenRouter, so model-assisted intent handling is not yet reliable enough to call complete.
+- After the latest deployment, “We are all set for the wedding” still escalated to the family. That wording is not covered by the deterministic parser, so this live check did not pass the OpenRouter intent-classification gate.
+- The Worker test suite includes a 15-message realistic RSVP/fact matrix. It passes locally, but not all 15 messages have been manually entered in the live chat.
 
-## Run locally on Windows
+The demo roster and wedding details are fictional. The app handles supported wedding questions and RSVP updates; it cannot promise to answer every possible message. When the available details do not support an answer, it sends the question to the family.
 
-Requires Python 3.10 or newer. Local mode uses SQLite.
+## Run and test the Worker
 
-    cd C:/Users/ramna/OneDrive/Desktop/wedding-studio-desk
-    py -3 app.py
+Install Node.js, then from `cloudflare/` run:
 
-Open http://127.0.0.1:8787/ for guests and http://127.0.0.1:8787/family for the family desk. Family username is owner; set OWNER_PASSWORD in ignored .env.local. Keep the terminal running.
+```powershell
+npm install
+npm test
+npx wrangler deploy --dry-run
+```
 
-For phone testing on the same Wi-Fi, set ASSIGNMENT_HOST to 0.0.0.0 before starting and open http://<computer-LAN-IP>:8787/ on the phone.
+For a real deploy, configure `HYPERDRIVE`, `OWNER_PASSWORD`, and `OPENROUTER_API_KEYS` in Cloudflare. `cloudflare/wrangler.toml` contains the Worker name, Hyperdrive binding, and non-secret settings. Apply `cloudflare/supabase_schema.sql` to the intended Supabase project before the first deployment. Never commit `.env.local`, passwords, API keys, or real guest data.
 
-## Fictional demo data
+The repository also retains the earlier local Studio Desk prototype (`app.py` and `test_app.py`). The hosted Ishqweds guest desk runs from `cloudflare/`.
 
-Upload data/demo_guest_list.csv and data/demo_wedding_details.csv from the family desk. Demo numbers are 9000000001 through 9000000020; no OTP is sent.
+## Scope
 
-    Haan aa rahe hain, 4 log, 21 ko train se
-    Hum 2 log aayenge shaadi mein, reception nahi aa paayenge
-    Hum 6 log aayenge
-    Hum dono aa rahe hain, flight se 20 Nov ko. Room chahiye.
-    Nahi aa payenge, sorry
-    Venue kahan hai?
-    Mehendi kab hai?
-    Sangeet ka time kya hai?
-    ok
-    thanks
-    Can we bring our dog to the venue?
-
-The pet-policy question should reach the family inbox. Reply from the family desk and check the same guest chat.
-
-## Database and deploy
-
-The Worker uses Supabase PostgreSQL through the HYPERDRIVE binding. cloudflare/supabase_schema.sql creates only public.ishqweds_* tables. Hyperdrive uses encrypted connections with query caching disabled. Deployment steps are in cloudflare/README.md. The Worker does not depend on the developer's computer staying on. Free-plan quotas and availability can change.
-
-Do not commit .env.local, API keys, passwords, or real guest data. Owner routes use Basic Auth and the Cloudflare OWNER_PASSWORD secret.
-
-## Tests
-
-Python: py -3 -m unittest -v test_app.py — 80 tests passed on 22 October 2026, including 15 realistic English/Hinglish message cases.
-
-From cloudflare/: npm test — 24 parser and PostgreSQL adapter tests passed, including a 15-message realistic RSVP matrix, natural English mixed RSVP parsing, model-key failover, natural room/pickup wording, and arrival-date regressions. These parser tests do not replace a production database round-trip. npx wrangler deploy --dry-run checks build and bindings.
-
-Worker version `d194601a` is active at 100% and includes the Gemma model setting. The deterministic RSVP fix is live and the reported English mixed-RSVP example now passes. The novel “count us in” example still escalates, and the encrypted OpenRouter key secret is not verified. The local suites pass (24 Cloudflare tests and 80 Python tests), but they do not prove every wording or language. Updating the encrypted Worker secret with a valid Cloudflare token and retesting that novel phrasing remain release checks.
-
-The requested two-minute recording is being handled by the owner.
+- Guest chat is a web page, not WhatsApp Business.
+- Phone-number matching is not OTP verification.
+- Supabase holds guest rows, wedding facts, sessions, messages, and family inbox items.
+- Replacing the guest CSV clears guest sessions, messages, inbox entries, and RSVP updates.
+- The requested two-minute recording is being handled by the owner.
