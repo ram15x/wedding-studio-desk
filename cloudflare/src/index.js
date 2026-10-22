@@ -302,21 +302,30 @@ function parseRsvp(text, g, facts, intent = null) {
     updates = {},
     notes = [],
     resp = {};
+  const numberWords = {
+    one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7,
+    eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12,
+  };
   let m =
     q.match(/\b(\d{1,2})\s*(?:log|people|persons?|guests?|jan|members?)\b/) ||
+    q.match(/\b(\d{1,2})\s+of\s+(?:us|our\s+(?:group|party|family))\b/) ||
     q.match(
       /\b(?:hum|we|ham|family)\s+(\d{1,2})\s*(?:aayenge|ayenge|aaenge|log)?\b/,
     );
+  if (!m) {
+    const wordCount = q.match(/\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+(?:of\s+(?:us|our\s+(?:group|party|family))|people|persons?|guests?|family\s+members)\b/);
+    if (wordCount) m = [wordCount[0], String(numberWords[wordCount[1]])];
+  }
   if (m) {
     updates.party_size = Number(m[1]);
     notes.push("count");
   }
   let yes =
-      /\b(aa rahe|aayenge|ayenge|aaenge|aaunga|aaungi|coming|will come|attend|haan|yes|sure|zaroor|jarur)\b/.test(
+      /\b(aa rahe|aayenge|ayenge|aaenge|aaunga|aaungi|coming|will come|attend|attending|haan|yes|sure|zaroor|jarur|planning to come|plan to come|planning to attend|plan to attend|would love to join|will be there|we ll be there|we will be there)\b/.test(
         q,
       ),
     no =
-      /\b(nahi aa|nahi aay|nahi ay|nahin aa|not coming|can't come|cannot come|won't come|will not come|skip|unable to come)\b/.test(
+      /\b(nahi aa|nahi aay|nahi ay|nahin aa|not coming|can t come|cannot come|can t make it|cannot make it|won t make it|will not make it|won t be able to (?:come|attend)|will not be able to (?:come|attend)|unable to (?:come|attend)|won t come|will not come|skip)\b/.test(
         q,
       );
   if (m && !yes && !no) yes = true;
@@ -360,10 +369,10 @@ function parseRsvp(text, g, facts, intent = null) {
     // Evaluate each function inside its own punctuation/conjunction clause so
     // a decline for one event cannot leak into the next event's RSVP.
     const c = ownClauses.at(-1);
-    if (/\b(nahi|nahin|not|no|skip|can't|cannot|won't|unable)\b/.test(c))
+    if (/\b(nahi|nahin|not|no|skip|can t|cannot|won t|unable)\b/.test(c))
       resp[f] = "not_coming";
     else if (
-      /\b(haan|yes|aa|aay(?:enge|ega|egi)?|ay(?:enge|ega|egi)?|aa(?:enge|unga|ungi)|coming|will|attend|zaroor)\b/.test(c)
+      /\b(haan|yes|aa|aay(?:enge|ega|egi)?|ay(?:enge|ega|egi)?|aa(?:enge|unga|ungi)|coming|come|will|attend|attending|join|joining|planning|plan|zaroor)\b/.test(c)
     )
       resp[f] = "coming";
   }

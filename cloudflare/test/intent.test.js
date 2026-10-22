@@ -230,6 +230,34 @@ test("a plan mentioning wedding is not treated as a wedding-fact question", () =
   assert.equal(directFactQuestion("When is the wedding?"), true);
 });
 
+test("natural English RSVP with a party count and mixed attendance updates without the model", () => {
+  const parsed = parseRsvp(
+    "We're planning to come for the mehendi and wedding, just 2 of us, but we can't make it to the sangeet.",
+    guest,
+    {},
+  );
+  assert.equal(parsed.updates.party_size, 2);
+  assert.deepEqual(JSON.parse(parsed.updates.function_responses_json), {
+    Mehendi: "coming",
+    Wedding: "coming",
+    Sangeet: "not_coming",
+  });
+  assert.equal(parsed.notes.includes("rsvp"), true);
+});
+
+test("number words and common attendance paraphrases are parsed as RSVP", () => {
+  const parsed = parseRsvp(
+    "Two of us will be there for the wedding, but we cannot make it to reception.",
+    guest,
+    {},
+  );
+  assert.equal(parsed.updates.party_size, 2);
+  assert.deepEqual(JSON.parse(parsed.updates.function_responses_json), {
+    Wedding: "coming",
+    Reception: "not_coming",
+  });
+});
+
 test("OpenRouter tries the next configured key after a rate limit and validates its result", async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];
