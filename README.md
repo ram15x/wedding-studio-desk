@@ -25,7 +25,7 @@ The family password is managed as a Cloudflare secret and is not included here. 
 
 ## What I checked on 22 October 2026
 
-The active Cloudflare Worker version is `3d67a6c8-218a-44f6-bac4-08ff3008a225`. It uses Supabase PostgreSQL through Cloudflare Hyperdrive. I uploaded the repository's synthetic 20-guest CSV and wedding-details CSV to the live import endpoints, then ran the RSVP and reply checks below. The CSV upload endpoint accepted all 20 rows; the browser's file chooser could not be used because the Chrome extension blocks local-file access, so a fresh upload through the visible file picker is still unverified.
+The active Cloudflare Worker version seen on 22 Oct is `815f06ee` (a configuration-only deployment); the current app source is newer and has not yet been deployed. The Worker uses Supabase PostgreSQL through Cloudflare Hyperdrive. I uploaded the repository's synthetic 20-guest CSV and wedding-details CSV to the live import endpoints, then ran the RSVP and reply checks below. The CSV upload endpoint accepted all 20 rows; the browser's file chooser could not be used because the Chrome extension blocks local-file access, so a fresh upload through the visible file picker is still unverified.
 
 | Guest message | Observed result |
 | --- | --- |
@@ -47,11 +47,11 @@ I redeployed the Worker after those updates. The health endpoint still reported 
 
 ## Latest reply-quality update
 
-The current source now builds RSVP confirmations from the guest's actual update: it names the functions they said yes or no to, confirms the party size, and explains when the count needs family confirmation. Schedule answers use the date and time stored in the details sheet. OpenRouter reads less predictable wording into intent fields; it does not write the answer or supply wedding facts. The reply is assembled from the verified guest update and uploaded wedding details.
+The current source now builds RSVP confirmations from the guest's actual update: it names the functions they said yes or no to, confirms the party size, and explains when the count needs family confirmation. Schedule and wedding-detail answers are phrased as short conversational sentences instead of label-value output, using only the date, time, and details stored in the family's sheet. OpenRouter reads less predictable wording into intent fields; it does not write the answer or supply wedding facts. The reply is assembled from the verified guest update and uploaded wedding details.
 
 The reply-quality change is covered by the Worker tests, but it has **not been verified in the live deployment yet**. Live OpenRouter behavior also remains unverified: earlier live requests were rate-limited or escalated, while the latest test run only exercises mocked model responses. Do not treat local test success as proof that the live OpenRouter keys or model are working.
 
-On 22 Oct, the Cloudflare dashboard still showed Worker version `3d67a6c8` active, and the live message “You can count our family in for the big day” escalated to the family. GitHub has the newer source, but this update still needs a Cloudflare deployment and a repeat live test.
+On 22 Oct, the Cloudflare dashboard showed version `815f06ee` active after a secret update; it still runs the prior app code. The live message “You can count our family in for the big day” escalated to the family. GitHub has the newer source, but this update still needs a Cloudflare code deployment and a repeat live test.
 
 The demo roster and wedding details are fictional. The app handles supported wedding questions and RSVP updates; it cannot promise to answer every possible message. When the available details do not support an answer, it sends the question to the family.
 
