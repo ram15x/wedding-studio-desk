@@ -9,9 +9,9 @@ A phone-friendly web chat and password-protected family desk for one wedding. Gu
 - Health: https://ishqweds-guest-desk.ramnarayanan155-68f.workers.dev/health
 - Source: https://github.com/ram15x/wedding-studio-desk
 
-On 22 October 2026, Worker version 074f917a-fc1c-4f4a-b642-1620a2284d65 was deployed with Supabase PostgreSQL through Cloudflare Hyperdrive. Read-only live checks passed: guest page HTTP 200; /health HTTP 200 with 20 guests; unauthenticated /family HTTP 401; authenticated dashboard with 20 guest rows and four function groups. It showed two arrivals, two pickup entries, and two room requests. The existing synthetic inbox had four items, three open; it was not clean.
+On 22 October 2026, Worker version `69add550-4f34-4d21-a441-1d8f11594012` was deployed with Supabase PostgreSQL through Cloudflare Hyperdrive. The live health check returned `status: ok` and 20 guests. A read-only query in the Supabase SQL Editor confirmed 20 guest rows, 8 wedding-fact rows, 7 sessions, 90 messages, and 10 family-inbox items. The 20 guest rows remained available after this deployment; this verifies one deployment, not every future deployment.
 
-This deployment check did not send a new guest message. A live RSVP write and the unsupported-question → family-reply → guest-chat cycle remain unverified after the database cutover. Phone layout was not retested. Data is synthetic; Railway and old D1 data were not migrated or deleted.
+After deployment, a live synthetic guest message, “I arrive on 20 November 2026 by flight and need a pickup,” returned `arrival_date: 2026-11-20`, `arrival_mode: flight`, and `needs_pickup: 1` with no escalation. A fresh guest-list upload, a clean three-guest demo, the owner-reply round trip after this deployment, and a physical phone retest were not performed. Replacing the guest list clears sessions, messages, and inbox entries, so do not upload over the live demo data casually. The data is synthetic; Railway and old D1 data were not migrated.
 
 ## Features and limits
 
@@ -69,6 +69,6 @@ Python: py -3 -m unittest -v test_app.py — 80 tests passed on 22 October 2026,
 
 From cloudflare/: npm test — 17 parser and PostgreSQL adapter tests passed, including a 15-message realistic RSVP matrix and arrival-date regression cases. These parser tests do not replace a production database round-trip. npx wrangler deploy --dry-run checks build and bindings.
 
-The live smoke test checked Worker startup, Supabase-backed health, guest page, and family authentication/dashboard reads. It did not exercise live guest writes or the family-reply round trip. Tests do not prove every wording or language.
+The latest live smoke test checked Worker startup, Supabase-backed health, and one guest arrival write. The family-reply round trip was verified earlier but was not repeated after this deployment. Tests do not prove every wording or language.
 
 The requested two-minute recording is being handled by the owner.

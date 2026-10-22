@@ -12,11 +12,11 @@ Family username is owner. Password is the encrypted Cloudflare Worker secret OWN
 
 ## Deployment status
 
-On 22 October 2026, Worker version 074f917a-fc1c-4f4a-b642-1620a2284d65 was deployed with Hyperdrive config 3504b16dd1514ef68e00565261f62698. Binding HYPERDRIVE and its ID are in wrangler.toml. Hyperdrive uses encrypted PostgreSQL connections with query caching disabled.
+On 22 October 2026, Worker version `69add550-4f34-4d21-a441-1d8f11594012` was deployed with Hyperdrive config `3504b16dd1514ef68e00565261f62698`. Binding HYPERDRIVE and its ID are in `wrangler.toml`. Hyperdrive uses encrypted PostgreSQL connections with query caching disabled.
 
-Live read checks returned HTTP 200 for the guest page and /health; health reported 20 guests. Unauthenticated /family returned HTTP 401. Authenticated dashboard reads showed 20 guests, Wedding/Reception/Mehendi/Sangeet groups, two arrivals, two pickups, and two room requests. The inbox had four existing synthetic entries, three open.
+After deployment, `/health` returned `status: ok` with 20 guests. A read-only Supabase SQL Editor query confirmed 20 guest rows, 8 wedding-fact rows, 7 sessions, 90 messages, and 10 family-inbox items. The guest-row count was 20 before and after this deployment, so this deployment did not wipe those rows. This is one observed deployment, not a guarantee about every future deployment.
 
-This confirms the Worker reads Supabase. No new guest message was sent during this deployment check, so a live RSVP update and unknown-question → family-reply → guest-chat cycle still need an end-to-end run. Phone layout was not retested. Data is synthetic; Railway and old D1 records were not migrated or deleted.
+The live synthetic guest message “I arrive on 20 November 2026 by flight and need a pickup” returned the saved date `2026-11-20`, mode `flight`, and pickup flag `1` without escalation. A fresh upload, clean three-guest demo, owner-reply round trip after this deployment, and physical phone retest remain unverified. Replacing the guest list clears sessions, messages, and inbox items. The inbox currently has 10 entries and may contain prior QA; review it before demonstrating. Data is synthetic; Railway and old D1 records were not migrated or deleted.
 
 ## Deploy
 
