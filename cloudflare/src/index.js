@@ -387,19 +387,23 @@ function parseRsvp(text, g, facts, intent = null) {
   } else if (!date && hasArrivalContext && hasDatePhrase) {
     notes.push("ambiguous_arrival_date");
   }
-  if (/room chahiye|need a room|need room/.test(q)) {
+  if (
+    /room (?:chahiye|chaiye)|\bneed (?:a )?room\b|\bwant (?:a )?room\b|\brequire (?:a )?room\b|\b(?:please )?(?:arrange|book|reserve|organize)(?: us)?(?: a)?\b.{0,32}\broom\b/.test(q)
+  ) {
     updates.needs_room = 1;
     notes.push("needs_room");
   }
-  if (/room nahi|no room|don't need room/.test(q)) {
+  if (/room (?:nahi|nahin)|\bno room\b|\bno pickup or room\b|\b(?:don t|dont|do not) need (?:a )?room\b|\broom (?:not needed|isn t needed)\b/.test(q)) {
     updates.needs_room = 0;
     notes.push("needs_room");
   }
-  if (/pickup chahiye|pickup chaiye|pickup bhi|pickup kar do|pickup kar dena|need pickup|need a pickup|pick me up|and pickup|pickup also/.test(q)) {
+  if (
+    /pickup (?:chahiye|chaiye|bhi|kar do|kar dena|also|please|needed|required)|\bneed (?:a )?pickup\b|\bwant (?:a )?pickup\b|\brequire (?:a )?pickup\b|\bpick me up\b|\band pickup\b|\b(?:please )?(?:arrange|book|reserve|organize)(?: us)?(?: a)?\b.{0,24}\bpickup\b/.test(q)
+  ) {
     updates.needs_pickup = 1;
     notes.push("needs_pickup");
   }
-  if (/no pickup|pickup (?:bhi )?(?:nahi|nahin)|don't need pickup/.test(q)) {
+  if (/\bno pickup\b|\bno room or pickup\b|pickup (?:bhi )?(?:nahi|nahin)|\b(?:don t|dont|do not) need (?:a )?pickup\b|\b(?:don t|dont|do not) need (?:a )?room or (?:a )?pickup\b|\bpickup (?:not needed|isn t needed)\b/.test(q)) {
     updates.needs_pickup = 0;
     notes.push("needs_pickup");
   }

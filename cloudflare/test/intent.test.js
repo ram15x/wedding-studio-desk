@@ -111,6 +111,28 @@ test("a casual Hinglish pickup request is recorded", () => {
   assert.equal(parsed.updates.arrival_date, "2026-11-20");
 });
 
+test("natural arrangement wording records room and pickup requests", () => {
+  const parsed = parseRsvp(
+    "We will come by train on 21 November 2026, please arrange pickup and a room.",
+    guest,
+    {},
+  );
+  assert.equal(parsed.updates.arrival_date, "2026-11-21");
+  assert.equal(parsed.updates.arrival_mode, "train");
+  assert.equal(parsed.updates.needs_pickup, 1);
+  assert.equal(parsed.updates.needs_room, 1);
+});
+
+test("natural room and pickup declines override earlier positive mentions", () => {
+  const parsed = parseRsvp(
+    "We need a room and pickup, but we don't need a room or pickup after all.",
+    guest,
+    {},
+  );
+  assert.equal(parsed.updates.needs_room, 0);
+  assert.equal(parsed.updates.needs_pickup, 0);
+});
+
 test("15 realistic guest messages produce grounded RSVP, travel, or fact results", () => {
   const cases = [
     ["Hum 6 log aayenge", {}, { party_size: 6, function_responses_json: { Mehendi: "coming", Sangeet: "coming", Wedding: "coming", Reception: "coming" } }],
