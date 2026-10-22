@@ -10,4 +10,4 @@ id = "3504b16dd1514ef68e00565261f62698"
 
 [vars]
 APP_TITLE = "Wedding Guest Desk"
-OPENROUTER_MODELS = "openrouter/free,openrouter/free,openrouter/free"
+OPENROUTER_MODELS = "google/gemma-4-31b-it:free"
