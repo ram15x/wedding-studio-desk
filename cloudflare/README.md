@@ -34,7 +34,7 @@ Check current Cloudflare and Supabase free-plan limits before relying on them fo
 
 ## Local tests
 
-Run npm test for 13 focused parser and PostgreSQL adapter tests. Run npx wrangler deploy --dry-run for a build check. These do not replace production end-to-end acceptance tests.
+Run npm test for 17 focused parser and PostgreSQL adapter tests. The parser suite includes a 15-message realistic RSVP matrix plus natural month-name and ambiguous-date regressions. These unit tests do not prove production database persistence. Run npx wrangler deploy --dry-run for a build check. These do not replace production end-to-end acceptance tests.
 
 For local PostgreSQL testing, set SUPABASE_DB_URL privately and verify TLS with the Supabase CA certificate. Do not disable certificate verification. Use synthetic data.
 

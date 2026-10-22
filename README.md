@@ -67,7 +67,7 @@ Do not commit .env.local, API keys, passwords, or real guest data. Owner routes 
 
 Python: py -3 -m unittest -v test_app.py — 80 tests passed on 22 October 2026, including 15 realistic English/Hinglish message cases.
 
-From cloudflare/: npm test — 13 parser and PostgreSQL adapter tests passed. npx wrangler deploy --dry-run checks build and bindings.
+From cloudflare/: npm test — 17 parser and PostgreSQL adapter tests passed, including a 15-message realistic RSVP matrix and arrival-date regression cases. These parser tests do not replace a production database round-trip. npx wrangler deploy --dry-run checks build and bindings.
 
 The live smoke test checked Worker startup, Supabase-backed health, guest page, and family authentication/dashboard reads. It did not exercise live guest writes or the family-reply round trip. Tests do not prove every wording or language.
 

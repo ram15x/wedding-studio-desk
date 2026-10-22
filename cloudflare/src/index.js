@@ -255,6 +255,43 @@ function groundedFactReply(keys, facts, language = "english") {
   const label = key.replace(/[_-]+/g, " ").replace(/\b\w/g, (x) => x.toUpperCase());
   return language === "english" ? `${label}: ${displayDate(value)}.` : `${label} ${displayDate(value)} hai.`;
 }
+function resolveArrivalDate(q, facts) {
+  const valid = (year, month, day) => {
+    const d = new Date(Date.UTC(year, month - 1, day));
+    return d.getUTCFullYear() === year && d.getUTCMonth() === month - 1 && d.getUTCDate() === day
+      ? `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`
+      : "";
+  };
+  const factDates = [...new Set(Object.values(facts).join(" ").match(/\b20\d{2}-\d{2}-\d{2}\b/g) || [])];
+  let m = q.match(/\b(20\d{2})[-/](\d{1,2})[-/](\d{1,2})\b/);
+  if (m) return valid(Number(m[1]), Number(m[2]), Number(m[3]));
+
+  const monthNames = {
+    jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3,
+    apr: 4, april: 4, may: 5, jun: 6, june: 6, jul: 7, july: 7,
+    aug: 8, august: 8, sep: 9, sept: 9, september: 9, oct: 10,
+    october: 10, nov: 11, november: 11, dec: 12, december: 12,
+  };
+  const monthPattern = Object.keys(monthNames).sort((a, b) => b.length - a.length).join("|");
+  m = q.match(new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(${monthPattern})\\s*(20\\d{2})?\\b`)) ||
+      q.match(new RegExp(`\\b(${monthPattern})\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:\\s*,?\\s*(20\\d{2}))?\\b`));
+  if (m) {
+    const dayFirst = /^\d/.test(m[1]);
+    const day = Number(dayFirst ? m[1] : m[2]);
+    const month = monthNames[dayFirst ? m[2] : m[1]];
+    const year = Number(m[3] || 0);
+    if (year) return valid(year, month, day);
+    const matches = factDates.filter((value) => Number(value.slice(5, 7)) === month && Number(value.slice(8, 10)) === day);
+    return matches.length === 1 ? matches[0] : "";
+  }
+
+  m = q.match(/\b(\d{1,2})\s*(?:ko|tarikh|th|st|nd|rd)\b/);
+  if (m) {
+    const matches = factDates.filter((value) => Number(value.slice(8, 10)) === Number(m[1]));
+    if (matches.length === 1) return matches[0];
+  }
+  return "";
+}
 function parseRsvp(text, g, facts, intent = null) {
   const q = norm(text),
     invited = JSON.parse(g.functions_json || "[]"),
@@ -294,6 +331,11 @@ function parseRsvp(text, g, facts, intent = null) {
         .filter((x) => x.at >= 0),
     )
     .sort((a, b) => a.at - b.at);
+  const clauses = String(text)
+    .toLowerCase()
+    .split(/[,;.!?]|\b(?:but|however|whereas|while)\b/)
+    .map(norm)
+    .filter(Boolean);
   // A general yes/no applies to every invited function only when the guest
   // did not name a particular function. In a mixed RSVP, leave other events
   // unchanged instead of silently marking them as coming.
@@ -308,17 +350,16 @@ function parseRsvp(text, g, facts, intent = null) {
     notes.push("rsvp");
   }
   for (const f of invited) {
-    const own = mentions.filter((x) => x.f === f);
-    if (!own.length) continue;
-    const hit = own[0],
-      next = mentions.find((x) => x.at > hit.at && x.f !== f),
-      c = q.slice(Math.max(0, hit.at - 18), next ? next.at : q.length);
-    if (/\b(nahi|nahin|not|no|skip|can't|cannot)\b/.test(c))
+    const aliases = aliasesFor(f);
+    const ownClauses = clauses.filter((clause) => aliases.some((a) => clause.includes(a)));
+    if (!ownClauses.length) continue;
+    // Evaluate each function inside its own punctuation/conjunction clause so
+    // a decline for one event cannot leak into the next event's RSVP.
+    const c = ownClauses.at(-1);
+    if (/\b(nahi|nahin|not|no|skip|can't|cannot|won't|unable)\b/.test(c))
       resp[f] = "not_coming";
     else if (
-      /\b(haan|yes|aa|aay(?:enge|ega|egi)?|ay(?:enge|ega|egi)?|aa(?:enge|unga|ungi)|coming|will|zaroor)\b/.test(
-        c,
-      )
+      /\b(haan|yes|aa|aay(?:enge|ega|egi)?|ay(?:enge|ega|egi)?|aa(?:enge|unga|ungi)|coming|will|attend|zaroor)\b/.test(c)
     )
       resp[f] = "coming";
   }
@@ -337,27 +378,14 @@ function parseRsvp(text, g, facts, intent = null) {
     updates.arrival_mode = mode;
     notes.push("arrival_mode");
   }
-  let date = "",
-    dm = q.match(/\b(20\d{2})[-/](\d{1,2})[-/](\d{1,2})\b/);
-  if (dm) date = `${dm[1]}-${dm[2].padStart(2, "0")}-${dm[3].padStart(2, "0")}`;
-  else {
-    dm = q.match(/\b(\d{1,2})\s*(?:ko|tarikh|th|st|nd|rd)\b/);
-    if (dm && (mode || /arriv|pahunch|coming/.test(q))) {
-      const values =
-          Object.values(facts)
-            .join(" ")
-            .match(/\b20\d{2}-\d{2}-\d{2}\b/g) || [],
-        matches = [
-          ...new Set(
-            values.filter((x) => Number(x.slice(8, 10)) === Number(dm[1])),
-          ),
-        ];
-      if (matches.length === 1) date = matches[0];
-    }
-  }
-  if (date && (mode || /arriv|pahunch|coming/.test(q))) {
+  const date = resolveArrivalDate(q, facts);
+  const hasArrivalContext = Boolean(mode) || /arriv|pahunch|coming|attend|aay|aa rahe/.test(q);
+  const hasDatePhrase = /\b(?:20\d{2}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}(?:st|nd|rd|th)?\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:\s+20\d{2})?|(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}(?:st|nd|rd|th)?(?:\s+20\d{2})?|\d{1,2}\s*(?:ko|tarikh))\b/.test(q);
+  if (date && hasArrivalContext) {
     updates.arrival_date = date;
     notes.push("arrival_date");
+  } else if (!date && hasArrivalContext && hasDatePhrase) {
+    notes.push("ambiguous_arrival_date");
   }
   if (/room chahiye|need a room|need room/.test(q)) {
     updates.needs_room = 1;
@@ -367,7 +395,7 @@ function parseRsvp(text, g, facts, intent = null) {
     updates.needs_room = 0;
     notes.push("needs_room");
   }
-  if (/pickup chahiye|pickup chaiye|pickup bhi|pickup kar do|pickup kar dena|need pickup|need a pickup|pick me up/.test(q)) {
+  if (/pickup chahiye|pickup chaiye|pickup bhi|pickup kar do|pickup kar dena|need pickup|need a pickup|pick me up|and pickup|pickup also/.test(q)) {
     updates.needs_pickup = 1;
     notes.push("needs_pickup");
   }
@@ -384,7 +412,7 @@ function parseRsvp(text, g, facts, intent = null) {
       if (!yes && !no) yes = true;
     }
     if (intent.arrival_mode) { updates.arrival_mode = intent.arrival_mode; if (!notes.includes("arrival_mode")) notes.push("arrival_mode"); }
-    if (intent.arrival_date) { updates.arrival_date = intent.arrival_date; if (!notes.includes("arrival_date")) notes.push("arrival_date"); }
+    if (intent.arrival_date && resolveArrivalDate(intent.arrival_date, {}) === intent.arrival_date) { updates.arrival_date = intent.arrival_date; if (!notes.includes("arrival_date")) notes.push("arrival_date"); }
     if (intent.arrival_time) updates.arrival_time = intent.arrival_time;
     if (intent.needs_room !== undefined) { updates.needs_room = intent.needs_room; if (!notes.includes("needs_room")) notes.push("needs_room"); }
     if (intent.needs_pickup !== undefined) { updates.needs_pickup = intent.needs_pickup; if (!notes.includes("needs_pickup")) notes.push("needs_pickup"); }
@@ -461,6 +489,19 @@ async function chat(db, sid, text, env) {
         now(),
       )
       .run();
+  if (p.notes.includes("ambiguous_arrival_date"))
+    await db
+      .prepare(
+        "INSERT INTO family_inbox(session_id,guest_id,question,reason,created_at) VALUES(?,?,?,?,?)",
+      )
+      .bind(
+        sid,
+        g.id,
+        text,
+        "Arrival date was unclear or did not match the uploaded wedding schedule; please confirm with the guest.",
+        now(),
+      )
+      .run();
   if (Object.keys(u).length) {
     const keys = Object.keys(u);
     await db
@@ -509,6 +550,12 @@ async function chat(db, sid, text, env) {
         ? u.needs_pickup ? "Pickup chahiye, note kar liya hai." : "Pickup nahi chahiye, note kar liya hai."
         : u.needs_pickup ? "I've noted that you need a pickup." : "I've noted that you don't need a pickup.",
     );
+  if (p.notes.includes("ambiguous_arrival_date"))
+    parts.push(
+      h
+        ? "Safar ki date wedding details se match nahi hui, family se confirm karne ko kaha hai."
+        : "I couldn't match that travel date to the wedding details, so I've asked the family to confirm it.",
+    );
   if (over)
     parts.push(
       h
@@ -535,7 +582,7 @@ async function chat(db, sid, text, env) {
       : "I couldn't confirm that from the family's details, so I've passed your message to them. They'll reply here.";
   }
   await log(db, sid, "desk", answer);
-  return { answer, updated: u, escalated: over || !parts.length };
+  return { answer, updated: u, escalated: over || p.notes.includes("ambiguous_arrival_date") || !parts.length };
 }
 
 const GUEST = `<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Wedding guest desk</title><style>*{box-sizing:border-box}body{margin:0;background:#f4f5f8;color:#20293a;font:16px system-ui}.wrap{max-width:720px;margin:auto;padding:18px}.card{background:white;border:1px solid #e1e5eb;border-radius:18px;padding:20px;margin:14px 0}h1{font-size:25px;margin:0 0 6px}.muted{color:#687386;font-size:14px}.chat{height:50vh;min-height:280px;overflow:auto;background:#f7f8fa;border-radius:12px;padding:12px;margin:12px 0}.bubble{max-width:88%;padding:11px 14px;border-radius:14px;margin:8px 0;white-space:pre-wrap}.guest{background:#ddf5dc;margin-left:auto}.desk{background:white}.family{background:#fff3dc}.row{display:flex;gap:8px}input,button{font:inherit;padding:12px;border-radius:10px}input{border:1px solid #cbd2df;flex:1;min-width:0}button{border:0;background:#315da8;color:white;font-weight:700}#talk[hidden]{display:none}</style><main class=wrap><section class=card><h1>Wedding guest desk</h1><div class=muted>Reply to your invitation or ask about the venue and functions.</div><div id=login><p>Phone number from your invitation</p><div class=row><input id=phone inputmode=tel placeholder="Phone number"><button onclick=join()>Continue</button></div><p class=muted>This matches your number to the family’s guest list. It does not send an SMS code.</p><p id=err class=muted></p></div><div id=talk hidden><p id=welcome class=muted></p><div id=chat class=chat></div><div class=row><input id=msg placeholder="Type a message…" onkeydown="if(event.key==='Enter')send()"><button onclick=send()>Send</button></div></div></section><p class=muted>If something is unclear, the family will reply here.</p></main><script>let sid='';async function init(){let d=await(await fetch('/api/guest/session')).json();sid=d.session_id;if(d.guest){show(d.guest.name);load()}}function show(n){login.hidden=true;talk.hidden=false;welcome.textContent='You are chatting as '+n+'.'}async function join(){let d=await(await fetch('/api/guest/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({phone:phone.value})})).json();if(!d.success){err.textContent=d.message||d.error;return}show(d.guest.name);load()}function add(role,body){let e=document.createElement('div');e.className='bubble '+role;e.textContent=body;chat.appendChild(e);e.scrollIntoView()}async function load(){let d=await(await fetch('/api/guest/conversation')).json();chat.innerHTML='';for(let m of d.messages||[])add(m.role==='guest'?'guest':m.role==='family'?'family':'desk',m.body)}async function send(){let message=msg.value.trim();if(!message)return;msg.value='';let d=await(await fetch('/api/guest/chat',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({message})})).json();if(d.error)add('desk',d.error);else await load()}init();setInterval(()=>{if(!talk.hidden)load()},5000)</script>`;

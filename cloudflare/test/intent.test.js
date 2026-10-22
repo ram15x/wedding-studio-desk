@@ -68,6 +68,37 @@ test("a later travel update does not reverse an explicit function decline", () =
   assert.equal(parsed.updates.needs_room, 1);
 });
 
+test("natural month-name arrival dates save without an LLM response", () => {
+  const facts = { "wedding date": "2026-11-22", "mehendi date": "2026-11-19" };
+  for (const message of [
+    "We're coming for the wedding, 2 people, flight on 20 Nov 2026. We need a room and pickup.",
+    "I arrive on 20 November 2026 by flight and need a pickup.",
+  ]) {
+    const parsed = parseRsvp(message, guest, facts);
+    assert.equal(parsed.updates.arrival_date, "2026-11-20", message);
+    assert.equal(parsed.updates.arrival_mode, "flight", message);
+    assert.equal(parsed.updates.needs_pickup, 1, message);
+  }
+});
+
+test("month-name arrival without a year resolves only from a unique wedding date", () => {
+  const parsed = parseRsvp("20 Nov ko flight se aa rahe hain", guest, {
+    "wedding date": "2026-11-22", "sangeet date": "2026-11-20",
+  });
+  assert.equal(parsed.updates.arrival_date, "2026-11-20");
+});
+
+test("invalid or ambiguous arrival dates are not silently stored", () => {
+  const invalid = parseRsvp("Arriving by flight on 31 February 2026", guest, {});
+  assert.equal(invalid.updates.arrival_date, undefined);
+  assert.ok(invalid.notes.includes("ambiguous_arrival_date"));
+  const ambiguous = parseRsvp("Arriving on 20 Nov by train", guest, {
+    "wedding date": "2026-11-20", "other date": "2027-11-20",
+  });
+  assert.equal(ambiguous.updates.arrival_date, undefined);
+  assert.ok(ambiguous.notes.includes("ambiguous_arrival_date"));
+});
+
 test("a casual Hinglish pickup request is recorded", () => {
   const parsed = parseRsvp(
     "Haan aa rahe hain, 2 log, 20 ko flight se. Room chahiye aur pickup bhi.",
@@ -78,6 +109,36 @@ test("a casual Hinglish pickup request is recorded", () => {
   assert.equal(parsed.updates.needs_room, 1);
   assert.equal(parsed.updates.arrival_mode, "flight");
   assert.equal(parsed.updates.arrival_date, "2026-11-20");
+});
+
+test("15 realistic guest messages produce grounded RSVP, travel, or fact results", () => {
+  const cases = [
+    ["Hum 6 log aayenge", {}, { party_size: 6, function_responses_json: { Mehendi: "coming", Sangeet: "coming", Wedding: "coming", Reception: "coming" } }],
+    ["Haan aa rahe hain, 4 log, 21 ko train se", { "wedding date": "2026-11-22", "sangeet date": "2026-11-21" }, { party_size: 4, arrival_mode: "train", arrival_date: "2026-11-21" }],
+    ["Hum 2 log aayenge shaadi mein, reception nahi aa payenge", {}, { party_size: 2, function_responses_json: { Wedding: "coming", Reception: "not_coming" } }],
+    ["Nahi aa payenge, sorry", {}, { function_responses_json: { Mehendi: "not_coming", Sangeet: "not_coming", Wedding: "not_coming", Reception: "not_coming" } }],
+    ["Mehendi nahi aa payenge, wedding aa rahe hain", {}, { function_responses_json: { Mehendi: "not_coming", Wedding: "coming" } }],
+    ["Reception mein haan aa rahe hain", {}, { function_responses_json: { Reception: "coming" } }],
+    ["We are coming for wedding, 3 people", {}, { party_size: 3, function_responses_json: { Wedding: "coming" } }],
+    ["Flight on 20 Nov 2026, room chahiye and pickup", {}, { arrival_date: "2026-11-20", arrival_mode: "flight", needs_room: 1, needs_pickup: 1 }],
+    ["I arrive on 20 November 2026 by flight and need a pickup", {}, { arrival_date: "2026-11-20", arrival_mode: "flight", needs_pickup: 1 }],
+    ["21 ko train se", { "wedding date": "2026-11-22", "sangeet date": "2026-11-21" }, { arrival_date: "2026-11-21", arrival_mode: "train" }],
+    ["We'll arrive 20 Nov by flight", { "sangeet date": "2026-11-20" }, { arrival_date: "2026-11-20", arrival_mode: "flight" }],
+    ["Room chahiye aur pickup bhi", {}, { needs_room: 1, needs_pickup: 1 }],
+    ["Room nahi chahiye, pickup nahi chahiye", {}, { needs_room: 0, needs_pickup: 0 }],
+    ["I need a pickup for my train on 19 November", { "wedding date": "2026-11-22", "mehendi date": "2026-11-19" }, { arrival_date: "2026-11-19", arrival_mode: "train", needs_pickup: 1 }],
+    ["Coming on 19 Nov 2026 in a train", {}, { arrival_date: "2026-11-19", arrival_mode: "train" }],
+  ];
+  assert.equal(cases.length, 15);
+  for (const [message, facts, expected] of cases) {
+    const parsed = parseRsvp(message, guest, facts);
+    for (const [key, value] of Object.entries(expected)) {
+      const actual = key === "function_responses_json"
+        ? JSON.parse(parsed.updates[key] || "{}")
+        : parsed.updates[key];
+      assert.deepEqual(actual, value, message);
+    }
+  }
 });
 
 test("an explicit Hinglish pickup decline overrides a positive mention", () => {
