@@ -9,9 +9,9 @@ A phone-friendly web chat and password-protected family desk for one wedding. Gu
 - Health: https://ishqweds-guest-desk.ramnarayanan155-68f.workers.dev/health
 - Source: https://github.com/ram15x/wedding-studio-desk
 
-On 22 October 2026, Worker version `69add550-4f34-4d21-a441-1d8f11594012` was deployed with Supabase PostgreSQL through Cloudflare Hyperdrive. A fresh import of the synthetic 20-guest CSV was verified directly in Supabase; it cleared prior QA sessions, messages, and inbox entries while preserving all 8 wedding facts. The current database has 20 guests, 2 sessions, 13 messages, and 2 inbox items (1 still open). The data is synthetic; Railway and old D1 data were not migrated.
+On 22 October 2026, Worker version `d80e1b65-2417-4be6-87d1-5fa517625078` was deployed with Supabase PostgreSQL through Cloudflare Hyperdrive. A fresh import of the synthetic 20-guest CSV was verified directly in Supabase; it cleared prior QA sessions, messages, and inbox entries while preserving all 8 wedding facts. After the live QA and deployment, the family page still showed all 20 guests and 8 facts, with 2 guest sessions and 2 inbox items. The data is synthetic; Railway and old D1 data were not migrated.
 
-Live checks after the import: Asha’s mixed Hinglish reply updated Wedding to coming for 2 people and Reception to not coming; Karthik’s “Hum 6 log aayenge” marked his invited functions as coming and flagged the count above his invitation; “Thanks!” got a reply without escalation; an unsupported pet question went to the family, and the family reply appeared in Asha’s chat. Asha’s train and 21 November 2026 arrival date saved. The phrase “please arrange pickup and a room” failed to save room/pickup flags, while a follow-up “Room chahiye aur pickup bhi” saved both. The broader phrasing fix is on GitHub as commit `1b4849e` but is **not yet deployed**. A third independent guest and a physical-phone retest were not completed. Replacing the guest list clears sessions, messages, and inbox entries.
+Live checks after the import: Asha’s mixed Hinglish reply updated Wedding to coming for 2 people and Reception to not coming; Karthik’s “Hum 6 log aayenge” marked his invited functions as coming and flagged the count above his invitation; “Thanks!” got a reply without escalation; an unsupported pet question went to the family, and the family reply appeared in Asha’s chat. Asha’s train and 21 November 2026 arrival date saved. After deploying version `d80e1b65-2417-4be6-87d1-5fa517625078`, “Arranging 21 Nov train, need a room and pickup please” saved the arrival, room, and pickup; the refreshed family dashboard showed those details. A third independent guest and a physical-phone retest were not completed. Replacing the guest list clears sessions, messages, and inbox entries.
 
 ## Features and limits
 
@@ -69,6 +69,6 @@ Python: py -3 -m unittest -v test_app.py — 80 tests passed on 22 October 2026,
 
 From cloudflare/: npm test — 19 parser and PostgreSQL adapter tests passed, including a 15-message realistic RSVP matrix, natural room/pickup wording, and arrival-date regressions. These parser tests do not replace a production database round-trip. npx wrangler deploy --dry-run checks build and bindings.
 
-The source fix for natural pickup/room requests is pushed to GitHub but awaits a Cloudflare deployment. The live Worker is still version `69add550-4f34-4d21-a441-1d8f11594012`; tests do not prove every wording or language.
+The natural pickup/room wording fix is deployed as Worker version `d80e1b65-2417-4be6-87d1-5fa517625078`. Tests do not prove every wording or language.
 
 The requested two-minute recording is being handled by the owner.
