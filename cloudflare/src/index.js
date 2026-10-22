@@ -168,6 +168,15 @@ function isConversationalGreeting(text) {
   const asksWeddingDetail = /\b(venue|address|location|date|time|mehendi|mehndi|sangeet|wedding|reception|booking|package|price|rate|balance|album|train|flight|pickup|room|coming|attending)\b/.test(normalized);
   return greetingStart && normalized.split(" ").length <= 8 && !asksWeddingDetail;
 }
+function naturalFactStatement(key, value, language = "english") {
+  const label = String(key).replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+  const normalized = norm(label);
+  if (/venue|address|location/.test(normalized))
+    return language === "english" ? `The venue is ${value}.` : `Venue ${value} hai.`;
+  const field = label.charAt(0).toLowerCase() + label.slice(1);
+  if (language !== "english") return `${label} ${value} hai.`;
+  return `The ${field} is ${value}.`;
+}
 function factAnswer(text, facts, language = "english") {
   const q = norm(text),
     policy =
@@ -184,7 +193,7 @@ function factAnswer(text, facts, language = "english") {
         )
       );
     });
-    return matching.map(([k, v]) => `${k}: ${v}`).join(". ");
+    return matching.map(([k, v]) => naturalFactStatement(k, v, language)).join(" ");
   }
   let exact = Object.entries(facts).filter(([k]) => {
     const ws = norm(k)
@@ -221,13 +230,7 @@ function factAnswer(text, facts, language = "english") {
   }
   if (exact.some(([k]) => /date|time|schedule/.test(norm(k))))
     return groundedFactReply(exact.map(([k]) => k), facts, language);
-  return exact.map(([k, v]) => {
-    const key = norm(k);
-    if (/venue|address|location/.test(key))
-      return language === "english" ? `The venue is ${v}.` : `Venue ${v} hai.`;
-    const label = k.replace(/[_-]+/g, " ").replace(/\b\w/g, (x) => x.toUpperCase());
-    return language === "english" ? `${label}: ${v}.` : `${label} ${v} hai.`;
-  }).join(" ");
+  return exact.map(([k, v]) => naturalFactStatement(k, v, language)).join(" ");
 }
 function directFactQuestion(text) {
   return /\?|\b(what|when|where|which|how|kab|kahan|kya|kitne|kitna|kitni)\b|\b(can|could|do)\s+you\b|\b(tell|share|send|remind|confirm)\s+(me|us)\b|\blet me know\b/i.test(String(text || ""));
@@ -260,12 +263,20 @@ function groundedFactReply(keys, facts, language = "english") {
     let time = t ? displayDate(t[1]) : "";
     if (!date && t) { const m = String(t[1]).match(/^(20\d{2}-\d{2}-\d{2})/); if (m) date = displayDate(m[1]); }
     if (time.includes(" at ")) time = time.split(" at ").pop();
-    const detail = [date, time && `at ${time}`].filter(Boolean).join(" ");
-    if (detail) return language === "english" ? `${event ? event[0].toUpperCase()+event.slice(1)+" is" : "It is"} ${detail}.` : `${event ? event[0].toUpperCase()+event.slice(1)+" " : ""}${detail} hai.`;
+    if (date || time) {
+      if (language !== "english") {
+        const dateText = date ? `${date} ko` : "";
+        const timeText = time ? `${time} par` : "";
+        return `${event ? event[0].toUpperCase() + event.slice(1) + " " : ""}${[dateText, timeText].filter(Boolean).join(" ")} hai.`;
+      }
+      const when = [date && `on ${date}`, time && `at ${time}`].filter(Boolean).join(" ");
+      const eventTitle = event ? event[0].toUpperCase() + event.slice(1) : "";
+      return `${eventTitle ? `The ${eventTitle} is` : "It is"} ${when}.`;
+    }
   }
   const [key, value] = items[0];
   const label = key.replace(/[_-]+/g, " ").replace(/\b\w/g, (x) => x.toUpperCase());
-  return language === "english" ? `${label}: ${displayDate(value)}.` : `${label} ${displayDate(value)} hai.`;
+  return naturalFactStatement(label, displayDate(value), language);
 }
 function groundedIntentFactReply(text, facts, intent, language = "english") {
   if (intent?.kind !== "fact" && !directFactQuestion(text)) return "";

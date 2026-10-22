@@ -32,7 +32,7 @@ test("model-classified fact paraphrases are answered from the selected sheet fie
     { kind: "fact", fact_keys: ["Sangeet Date", "Sangeet Time"], language: "english" },
     "english",
   );
-  assert.equal(answer, "Sangeet is 20 November 2026 at 6:30 PM.");
+  assert.equal(answer, "The Sangeet is on 20 November 2026 at 6:30 PM.");
 });
 
 test("RSVP confirmations sound conversational and explain mixed function replies", () => {
@@ -234,11 +234,18 @@ test("venue facts are phrased as a reply in the guest's language", () => {
   assert.equal(factAnswer("Venue kahan hai?", facts, "hinglish"), "Venue Lotus Hall hai.");
 });
 
+test("ordinary wedding details are answered in a sentence instead of label-value form", () => {
+  assert.equal(
+    factAnswer("Is there a dress code?", { "dress code": "Festive Indian wear" }, "english"),
+    "The dress code is Festive Indian wear.",
+  );
+});
+
 test("schedule answer turns stored date and timestamp into a human sentence", () => {
   const facts = { "mehendi time": "2026-11-19 16:00" };
   assert.equal(
     groundedFactReply(["mehendi time"], facts, "english"),
-    "Mehendi is 19 November 2026 at 4:00 PM.",
+    "The Mehendi is on 19 November 2026 at 4:00 PM.",
   );
 });
 
@@ -249,7 +256,7 @@ test("deterministic schedule fallback formats the date and time as a sentence", 
   };
   assert.equal(
     factAnswer("Mehendi kab hai?", facts, "hinglish"),
-    "Mehendi 19 November 2026 at 4:00 PM hai.",
+    "Mehendi 19 November 2026 ko 4:00 PM par hai.",
   );
 });
 
