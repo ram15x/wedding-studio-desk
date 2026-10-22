@@ -1,3 +1,4 @@
+import { connectPostgres } from "./postgres.js";
 const H = {
   "content-type": "application/json; charset=utf-8",
   "cache-control": "no-store",
@@ -575,10 +576,11 @@ async function dash(db) {
 }
 export default {
   async fetch(req, env) {
-    const u = new URL(req.url),
-      p = u.pathname,
-      db = env.DB;
-    if (!db) return json({ error: "D1 binding DB is missing." }, 500);
+    const u = new URL(req.url), p = u.pathname;
+    if (req.method === "GET" && p === "/") {
+      const sid = session(req);
+      return html(GUEST, { "set-cookie": setCookie(sid, req.url) });
+    }
     if (["/family", "/owner"].includes(p) || p.startsWith("/api/family/")) {
       if (!owner(req, env))
         return new Response("Owner login required", {
@@ -586,10 +588,21 @@ export default {
           headers: { "www-authenticate": "Basic realm=Family Desk" },
         });
     }
-    if (req.method === "GET" && p === "/") {
-      const sid = session(req);
-      return html(GUEST, { "set-cookie": setCookie(sid, req.url) });
+    let connection;
+    try {
+      connection = await connectPostgres(env.HYPERDRIVE?.connectionString);
+      return await route(req, env, connection.db);
+    } catch (error) {
+      console.error("PostgreSQL request failed:", error?.name || "database error");
+      return json({ error: "The wedding database is temporarily unavailable. Please try again." }, 503);
+    } finally {
+      if (connection) try { await connection.close(); } catch (error) { console.error("PostgreSQL connection close failed:", error?.name || "database error"); }
     }
+  },
+};
+
+async function route(req, env, db) {
+  const u = new URL(req.url), p = u.pathname;
     if (req.method === "GET" && ["/family", "/owner"].includes(p))
       return html(FAMILY);
     if (req.method === "GET" && p === "/health") {
@@ -779,6 +792,5 @@ export default {
       return json({ success: true });
     }
     return json({ error: "Not found." }, 404);
-  },
-};
+}
 export { parseRsvp, groundedFactReply, factAnswer, isConversationalGreeting };

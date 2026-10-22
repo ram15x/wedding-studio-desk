@@ -4,11 +4,9 @@ compatibility_date = "2026-10-21"
 workers_dev = true
 preview_urls = false
 
-[[d1_databases]]
-binding = "DB"
-database_name = "ishqweds-guest-desk"
-database_id = "e3b8960b-628f-4be3-8074-42093c172a9a"
-migrations_dir = "migrations"
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id = "3504b16dd1514ef68e00565261f62698"
 
 [vars]
 APP_TITLE = "Wedding Guest Desk"

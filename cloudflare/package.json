@@ -5,11 +5,12 @@
   "scripts": {
     "dev": "wrangler dev --local",
     "test": "node --test",
-    "deploy": "wrangler deploy",
-    "db:local": "wrangler d1 migrations apply ishqweds-guest-desk --local",
-    "db:remote": "wrangler d1 migrations apply ishqweds-guest-desk --remote"
+    "deploy": "wrangler deploy"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"
+  },
+  "dependencies": {
+    "pg": "^8.16.3"
   }
 }

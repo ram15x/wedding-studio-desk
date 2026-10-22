@@ -1,48 +1,48 @@
 # Cloudflare Worker deployment
 
-This directory contains the Cloudflare Workers + D1 version of the Ishqweds wedding guest desk. D1 stores guest rows, wedding facts, RSVP/travel updates, sessions, chat messages, and family inbox/replies. The Worker is request-driven, so it does not rely on a local server staying awake.
+The wedding guest desk runs as a Cloudflare Worker and stores data in Supabase PostgreSQL through Cloudflare Hyperdrive.
 
-## Current status
+## Live URLs
 
-The public test URL is:
+- Guest chat: https://ishqweds-guest-desk.ramnarayanan155-68f.workers.dev/
+- Family desk: https://ishqweds-guest-desk.ramnarayanan155-68f.workers.dev/family
+- Health: https://ishqweds-guest-desk.ramnarayanan155-68f.workers.dev/health
 
-**https://ishqweds-guest-desk.ramnarayanan155-68f.workers.dev**
+Family username is owner. Password is the encrypted Cloudflare Worker secret OWNER_PASSWORD.
 
-The Worker has a D1 database and synthetic 20-guest wedding data. The D1 database survived a Worker redeploy in an earlier check. OpenRouter is configured as an optional intent parser: it classifies the guest's message, while facts and guest records still come from D1. If the provider is unavailable or rate-limited, the Worker falls back to its deterministic parser. This is a prototype deployment; production parity with the Python app and migration of Railway data have not been completed or verified.
+## Deployment status
 
-The three configured keys are stored as Cloudflare secrets. They belong to one OpenRouter account, so they do not multiply that account's free-tier quota. The `openrouter/free` model router chooses an available free model; free-provider availability, rate limits, output quality and latency can vary. Never treat a model classification as the source of guest or wedding facts.
+On 22 October 2026, Worker version 074f917a-fc1c-4f4a-b642-1620a2284d65 was deployed with Hyperdrive config 3504b16dd1514ef68e00565261f62698. Binding HYPERDRIVE and its ID are in wrangler.toml. Hyperdrive uses encrypted PostgreSQL connections with query caching disabled.
 
-The current deployed source is commit `850cd9d` (22 October 2026), Worker version `8bb496b0-d84b-454f-b0ed-c0360e2d0af5`. Its focused test suite passes 10/10. A live synthetic guest test confirmed a Hinglish message ending in “pickup bhi” records party size, attendance, arrival, room, and pickup. The public health endpoint reports 20 synthetic guests. An authenticated Chrome check showed Vikram in the family dashboard, arrivals, room list, and pickup list; an unauthenticated `/family` request returned 401.
+Live read checks returned HTTP 200 for the guest page and /health; health reported 20 guests. Unauthenticated /family returned HTTP 401. Authenticated dashboard reads showed 20 guests, Wedding/Reception/Mehendi/Sangeet groups, two arrivals, two pickups, and two room requests. The inbox had four existing synthetic entries, three open.
+
+This confirms the Worker reads Supabase. No new guest message was sent during this deployment check, so a live RSVP update and unknown-question → family-reply → guest-chat cycle still need an end-to-end run. Phone layout was not retested. Data is synthetic; Railway and old D1 records were not migrated or deleted.
 
 ## Deploy
 
-1. Install Node.js, then from this directory run `npm install`.
-2. For an existing Worker, use an account-owned API token scoped to this Worker with the Workers Editor permission. Set it in `CLOUDFLARE_API_TOKEN` and set `CLOUDFLARE_ACCOUNT_ID`. Cloudflare documents that deploying an existing Worker with D1 bindings needs Worker Editor access; separate D1 table access is not required for code deployment. Avoid Wrangler's default OAuth consent if it requests unrelated account, zone, email, or security permissions.
-3. Create the persistent D1 database: `npx wrangler d1 create ishqweds-guest-desk`.
-4. Copy the returned database ID into `wrangler.toml`, replacing `REPLACE_WITH_D1_DATABASE_ID`.
-5. Set an owner password as a Cloudflare secret: `npx wrangler secret put OWNER_PASSWORD`. The current deployment's generated password is kept in the ignored local file `.owner-password.local`; do not commit or share it publicly.
-6. Apply the schema remotely: `npm run db:remote`.
-7. Deploy: `npm run deploy`.
-8. Test `/health`, `/`, and `/family`. The deployed D1 database contains synthetic demo data. A replacement guest-list upload clears guest sessions, chats, and inbox entries.
+Requirements: Node.js, a Cloudflare API token, and a Supabase PostgreSQL connection.
 
-For local development, use `npm run db:local` and `npm run dev`. Wrangler creates a local D1 database under its local state directory; it is separate from the production database.
+1. Run npm install in this directory.
+2. Apply supabase_schema.sql to the intended Supabase project. It creates only public.ishqweds_* tables.
+3. Hyperdrive config ID and binding are in wrangler.toml; the connection credential is stored in Cloudflare Hyperdrive, not this repository.
+4. Store OpenRouter keys and the family password as Worker secrets. Secret names are OPENROUTER_API_KEYS and OWNER_PASSWORD. OPENROUTER_MODELS is a non-secret variable. Never print or commit secret values.
+5. Run npm test and npx wrangler deploy --dry-run.
+6. Deploy with npx wrangler deploy.
+7. Verify /health, guest login and chat, RSVP write, dashboard, unknown-question escalation, family reply, and guest conversation.
 
-## Important boundaries
+Check current Cloudflare and Supabase free-plan limits before relying on them for an event. The Worker does not depend on the developer's computer staying on, but quotas and free-plan availability can change.
 
-- Guest access currently matches a phone number from the uploaded list. It does not send an OTP.
-- The URL is public. Anyone can open the guest page; family routes require the `owner` Basic Auth account and the `OWNER_PASSWORD` secret. The demo guest list uses synthetic phone numbers.
-- Uploading a replacement guest list clears guest sessions, chat history, and family inbox, matching the current app behavior. Export anything that must be retained first.
-- Cloudflare Workers and D1 have plan-specific request, CPU, storage, and database limits. Check the current Cloudflare plan terms before production use.
-- D1 is a different database from Supabase and Railway. Existing records are not copied automatically. Only the synthetic demo CSVs are loaded. No production-data migration has been done.
-- `workers_dev = true` exposes the production test URL; preview URLs are disabled. This deployment uses a public `workers.dev` address and has no custom domain.
-- Do not delete the old Railway service or volume until its data is exported or confirmed disposable, and the Cloudflare app passes the same acceptance checks against migrated data. This repository does not have a verified Render production deployment.
+## Local tests
 
-## Verify and test
+Run npm test for 13 focused parser and PostgreSQL adapter tests. Run npx wrangler deploy --dry-run for a build check. These do not replace production end-to-end acceptance tests.
 
-Run the Cloudflare unit checks:
+For local PostgreSQL testing, set SUPABASE_DB_URL privately and verify TLS with the Supabase CA certificate. Do not disable certificate verification. Use synthetic data.
 
-```powershell
-npm test
-```
+## Limits
 
-The current unit suite has ten checks for count-only RSVP, per-function mixed RSVP, preserving a function decline during a later travel update, greeting fallback, language-aware venue wording, schedule formatting, and positive/negative Hinglish pickup phrasing. A local D1 run exercised 15 realistic messages and the family-reply round trip with the synthetic 20-guest CSV and wedding facts. Fourteen batch assertions passed; the count-only case returned the expected six-person RSVP and over-invite flag, but its assertion expected per-function fields instead of the overall `rsvp_status` response. A separate exact replay confirmed six people, overall `coming`, and escalation. A separate deployed test on 22 October used synthetic Vikram Raman and confirmed the Worker response recorded coming, four people, 20 November 2026 by train, room, and pickup; the authenticated family dashboard showed him in the pickup list. Local tests do not prove physical-device behavior. Phone-number matching is not identity verification; there is no SMS or OTP.
+- Guest login matches a listed phone number; it does not send SMS OTP.
+- Guest access is web chat, not WhatsApp.
+- OpenRouter classifies intent; RSVP and wedding facts come from PostgreSQL.
+- Replacing a guest list clears sessions, messages, and inbox entries.
+- The deployed dataset is synthetic. No Railway or old D1 data was copied.
+- Family routes use Basic Auth. Set and rotate a strong private password.
