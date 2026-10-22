@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { factAnswer, groundedFactReply, isConversationalGreeting, parseRsvp } from "../src/index.js";
+import { directFactQuestion, factAnswer, groundedFactReply, isConversationalGreeting, modelIntent, parseRsvp } from "../src/index.js";
 
 const guest = {
   functions_json: JSON.stringify(["Mehendi", "Sangeet", "Wedding", "Reception"]),
@@ -197,4 +197,69 @@ test("deterministic schedule fallback formats the date and time as a sentence", 
     factAnswer("Mehendi kab hai?", facts, "hinglish"),
     "Mehendi 19 November 2026 at 4:00 PM hai.",
   );
+});
+
+test("natural-language intent can update a mixed RSVP without exact phrase rules", () => {
+  const parsed = parseRsvp(
+    "We would love to join the mehendi and wedding, but have a prior commitment for sangeet. There will be two of us.",
+    guest,
+    {},
+    {
+      kind: "rsvp",
+      function_responses: {
+        Mehendi: "coming",
+        Wedding: "coming",
+        Sangeet: "not_coming",
+      },
+      party_size: 2,
+    },
+  );
+  assert.equal(parsed.updates.party_size, 2);
+  assert.deepEqual(JSON.parse(parsed.updates.function_responses_json), {
+    Mehendi: "coming",
+    Wedding: "coming",
+    Sangeet: "not_coming",
+  });
+});
+
+test("a plan mentioning wedding is not treated as a wedding-fact question", () => {
+  assert.equal(
+    directFactQuestion("We would love to join the mehendi and wedding, but have a prior commitment for sangeet."),
+    false,
+  );
+  assert.equal(directFactQuestion("When is the wedding?"), true);
+});
+
+test("OpenRouter tries the next configured key after a rate limit and validates its result", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (_url, init) => {
+    calls.push(init);
+    if (calls.length === 1) return { status: 429, ok: false };
+    return {
+      status: 200,
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: JSON.stringify({
+          kind: "rsvp",
+          function_responses: { Mehendi: "coming", Sangeet: "not_coming", Unknown: "coming" },
+          party_size: 2,
+          language: "english",
+        }) } }],
+      }),
+    };
+  };
+  try {
+    const result = await modelIntent(
+      "We plan to come to mehendi and skip sangeet, two of us.",
+      guest,
+      {},
+      { OPENROUTER_API_KEYS: "test-key-one,test-key-two", OPENROUTER_MODELS: "openrouter/free" },
+    );
+    assert.equal(calls.length, 2);
+    assert.deepEqual(result.function_responses, { Mehendi: "coming", Sangeet: "not_coming" });
+    assert.equal(result.party_size, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

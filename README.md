@@ -13,6 +13,8 @@ On 22 October 2026, Worker version `d80e1b65-2417-4be6-87d1-5fa517625078` was de
 
 Live checks after the import: Asha’s mixed Hinglish reply updated Wedding to coming for 2 people and Reception to not coming; Karthik’s “Hum 6 log aayenge” marked his invited functions as coming and flagged the count above his invitation; “Thanks!” got a reply without escalation; an unsupported pet question went to the family, and the family reply appeared in Asha’s chat. Asha’s train and 21 November 2026 arrival date saved. After deploying version `d80e1b65-2417-4be6-87d1-5fa517625078`, “Arranging 21 Nov train, need a room and pickup please” saved the arrival, room, and pickup; the refreshed family dashboard showed those details. A third guest (Meena) submitted a separate RSVP/arrival through the live guest API, and the refreshed family page showed the changed headcount and her room request. That third session was not tested through a separate browser UI. A physical-phone retest was not performed in this audit. Replacing the guest list clears sessions, messages, and inbox entries.
 
+Additional audit on 22 October: an unfamiliar RSVP sentence mentioning “wedding” was incorrectly answered with the wedding schedule and did not update the RSVP. The source now limits fact answers to question-like requests and strengthens intent classification; this source change is not yet deployed. The three OpenRouter keys available in the local environment each returned HTTP 401 from OpenRouter’s read-only key endpoint. The Worker may have separate secrets; I could not inspect them in this audit, so production LLM availability is unverified.
+
 ## Features and limits
 
 - Imports guest rows (name, phone, side, functions, invited people) and wedding facts (item,value).
@@ -26,7 +28,7 @@ Live checks after the import: Asha’s mixed Hinglish reply updated Wedding to c
 
 ## OpenRouter
 
-OpenRouter intent parsing is configured as an optional classifier. It receives redacted message text and allowed function/fact-key names. RSVP values and wedding facts come from PostgreSQL; the model does not write records or supply facts. The free model router, provider availability, quotas, quality, and latency can vary. Multiple keys from one account do not multiply its quota. Redaction is best-effort.
+OpenRouter intent parsing is configured as an optional classifier. It receives redacted message text and allowed function/fact-key names. RSVP values and wedding facts come from PostgreSQL; the model does not write records or supply facts. In the latest audit, all three local keys returned HTTP 401, so their current validity is not established; the separate Worker secrets were not inspectable. If no valid key is configured, the app falls back to deterministic parsing and escalates unsupported wording. It is not a general-purpose answer bot. Multiple keys from one account do not multiply its quota. Redaction is best-effort.
 
 ## Run locally on Windows
 
@@ -67,8 +69,8 @@ Do not commit .env.local, API keys, passwords, or real guest data. Owner routes 
 
 Python: py -3 -m unittest -v test_app.py — 80 tests passed on 22 October 2026, including 15 realistic English/Hinglish message cases.
 
-From cloudflare/: npm test — 19 parser and PostgreSQL adapter tests passed, including a 15-message realistic RSVP matrix, natural room/pickup wording, and arrival-date regressions. These parser tests do not replace a production database round-trip. npx wrangler deploy --dry-run checks build and bindings.
+From cloudflare/: npm test — 22 parser and PostgreSQL adapter tests passed, including a 15-message realistic RSVP matrix, model-key failover, natural room/pickup wording, and arrival-date regressions. These parser tests do not replace a production database round-trip. npx wrangler deploy --dry-run checks build and bindings.
 
-The natural pickup/room wording fix is deployed as Worker version `d80e1b65-2417-4be6-87d1-5fa517625078`. Tests do not prove every wording or language.
+The natural pickup/room wording fix is deployed as Worker version `d80e1b65-2417-4be6-87d1-5fa517625078`. A newer source fix for RSVP/fact misclassification and OpenRouter fallback is awaiting deployment. Tests do not prove every wording or language.
 
 The requested two-minute recording is being handled by the owner.
