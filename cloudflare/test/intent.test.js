@@ -1,11 +1,24 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { directFactQuestion, factAnswer, groundedFactReply, isConversationalGreeting, modelIntent, parseRsvp } from "../src/index.js";
+import { directFactQuestion, factAnswer, groundedFactReply, isConversationalGreeting, modelIntent, parseRsvp, shouldUseModel } from "../src/index.js";
 
 const guest = {
   functions_json: JSON.stringify(["Mehendi", "Sangeet", "Wedding", "Reception"]),
   function_responses_json: "{}",
+  invited_count: 3,
 };
+
+test("model is skipped for greetings, acknowledgements, grounded facts, and clear RSVPs", () => {
+  const facts = { "Wedding Venue": "Lotus Hall" };
+  assert.equal(shouldUseModel("hi, how are you?", guest, facts), false);
+  assert.equal(shouldUseModel("thanks", guest, facts), false);
+  assert.equal(shouldUseModel("Where is the wedding venue?", guest, facts), false);
+  assert.equal(shouldUseModel("Hum 6 log aayenge", guest, facts), false);
+});
+
+test("model remains available for natural phrasing the deterministic parser cannot resolve", () => {
+  assert.equal(shouldUseModel("I intend to be at the wedding.", guest, {}), true);
+});
 
 test("count-only RSVP is recorded as coming", () => {
   const parsed = parseRsvp("Hum 6 log aayenge", guest, {});

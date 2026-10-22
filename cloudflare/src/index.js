@@ -232,6 +232,14 @@ function factAnswer(text, facts, language = "english") {
 function directFactQuestion(text) {
   return /\?|\b(what|when|where|which|how|kab|kahan|kya|kitne|kitna|kitni)\b|\b(can|could|do)\s+you\b|\b(tell|share|send|remind|confirm)\s+(me|us)\b|\blet me know\b/i.test(String(text || ""));
 }
+function shouldUseModel(text, guestRow, facts) {
+  const q = String(text || "").trim();
+  if (isConversationalGreeting(q) || /^(ok(ay)?|thanks?|thank you|thx|ty|theek hai|shukriya|accha|acha)[.!\s🙏😊]*$/i.test(q)) return false;
+  const parsed = parseRsvp(q, guestRow, facts);
+  if (parsed.notes.length || Object.keys(parsed.updates).length) return false;
+  if (directFactQuestion(q) && factAnswer(q, facts, "english")) return false;
+  return true;
+}
 function groundedFactReply(keys, facts, language = "english") {
   const items = keys.map((k) => [k, facts[k]]).filter(([, v]) => v);
   if (!items.length) return "";
@@ -463,7 +471,8 @@ async function chat(db, sid, text, env) {
   await log(db, sid, "guest", text);
   const { results: fr = [] } = await db.prepare("SELECT fact_key,fact_value FROM wedding_facts").all();
   const facts = Object.fromEntries(fr.map((x) => [x.fact_key, x.fact_value]));
-  const intent = await modelIntent(text, g, facts, env);
+  const useModel = shouldUseModel(text, g, facts);
+  const intent = useModel ? await modelIntent(text, g, facts, env) : null;
   const lang = intent?.language || (/\b(hum|haan|hai|nahi|nahin|aayenge|aa rahe|kahan|kab|chahiye|log|se)\b/i.test(text) ? "hinglish" : "english");
   if (isConversationalGreeting(text) || intent?.kind === "greeting") {
     const a = lang === "english" ? `Hi ${g.name.split(" ")[0]}! I'm doing well, thanks. What can I help you with?` : `Namaste ${g.name.split(" ")[0]}! Main theek hoon, dhanyavaad. Shaadi ke baare mein kya poochna chahenge?`;
@@ -855,4 +864,4 @@ async function route(req, env, db) {
     }
     return json({ error: "Not found." }, 404);
 }
-export { modelIntent, parseRsvp, groundedFactReply, factAnswer, directFactQuestion, isConversationalGreeting };
+export { modelIntent, parseRsvp, groundedFactReply, factAnswer, directFactQuestion, isConversationalGreeting, shouldUseModel };
