@@ -16,7 +16,7 @@ On 22 October 2026, Worker version `69add550-4f34-4d21-a441-1d8f11594012` was de
 
 After deployment, `/health` returned `status: ok` with 20 guests. A read-only Supabase SQL Editor query confirmed 20 guest rows, 8 wedding-fact rows, 7 sessions, 90 messages, and 10 family-inbox items. The guest-row count was 20 before and after this deployment, so this deployment did not wipe those rows. This is one observed deployment, not a guarantee about every future deployment.
 
-The live synthetic guest message “I arrive on 20 November 2026 by flight and need a pickup” returned the saved date `2026-11-20`, mode `flight`, and pickup flag `1` without escalation. A fresh upload, clean three-guest demo, owner-reply round trip after this deployment, and physical phone retest remain unverified. Replacing the guest list clears sessions, messages, and inbox items. The inbox currently has 10 entries and may contain prior QA; review it before demonstrating. Data is synthetic; Railway and old D1 records were not migrated or deleted.
+The synthetic 20-guest CSV was freshly imported and verified in Supabase. The upload cleared old sessions/messages/inbox and retained all 8 wedding facts. After live tests, the database has 20 guests, 2 sessions, 13 messages, and 2 inbox items (1 open). Live checks passed for mixed RSVP updates, count-only RSVP plus over-invite flag, thanks without escalation, and an unsupported question followed by a family reply visible in the guest chat. Asha’s date/train arrival saved. The phrase “please arrange pickup and a room” did not save those flags, although “Room chahiye aur pickup bhi” did. A source fix for broader room/pickup phrasing is pushed as commit `1b4849e` but has not been deployed. A third independent guest and physical-phone retest remain unverified. Replacing the guest list clears sessions, messages, and inbox items. Data is synthetic; Railway and old D1 records were not migrated or deleted.
 
 ## Deploy
 
@@ -34,7 +34,7 @@ Check current Cloudflare and Supabase free-plan limits before relying on them fo
 
 ## Local tests
 
-Run npm test for 17 focused parser and PostgreSQL adapter tests. The parser suite includes a 15-message realistic RSVP matrix plus natural month-name and ambiguous-date regressions. These unit tests do not prove production database persistence. Run npx wrangler deploy --dry-run for a build check. These do not replace production end-to-end acceptance tests.
+Run npm test for 19 focused parser and PostgreSQL adapter tests. The parser suite includes a 15-message realistic RSVP matrix plus natural month-name, ambiguous-date, and room/pickup wording regressions. These unit tests do not prove production database persistence. Run npx wrangler deploy --dry-run for a build check. These do not replace production end-to-end acceptance tests.
 
 For local PostgreSQL testing, set SUPABASE_DB_URL privately and verify TLS with the Supabase CA certificate. Do not disable certificate verification. Use synthetic data.
 
