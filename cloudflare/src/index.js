@@ -274,6 +274,66 @@ function groundedIntentFactReply(text, facts, intent, language = "english") {
     : "";
   return classified || factAnswer(text, facts, language);
 }
+function humanRsvpReply(updates, changedResponses, notes, invitedCount, language = "english") {
+  const hinglish = language !== "english";
+  const labels = {
+    wedding: hinglish ? "Wedding" : "the wedding",
+    reception: hinglish ? "Reception" : "the reception",
+    mehendi: hinglish ? "Mehendi" : "Mehendi",
+    mehndi: hinglish ? "Mehendi" : "Mehendi",
+    sangeet: hinglish ? "Sangeet" : "Sangeet",
+  };
+  const eventName = (name) => labels[norm(name)] || (hinglish ? name : `the ${name.toLowerCase()}`);
+  const sentences = [];
+  const responses = Object.entries(changedResponses || {});
+  if (responses.length) {
+    const yes = responses.filter(([, status]) => status === "coming").map(([name]) => eventName(name));
+    const no = responses.filter(([, status]) => status === "not_coming").map(([name]) => eventName(name));
+    const join = (names) => names.length < 2 ? (names[0] || "") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+    const count = notes.includes("count") && Number(updates.party_size) > 0 ? Number(updates.party_size) : 0;
+    if (hinglish) {
+      const clauses = [];
+      if (yes.length) clauses.push(`${count ? `${count} log ` : ""}${join(yes)} ke liye aa rahe hain`);
+      if (no.length) clauses.push(`${join(no)} ke liye nahi aa paayenge`);
+      sentences.push(`Theek hai, ${clauses.join(" aur ")}—note kar liya.`);
+    } else {
+      if (yes.length && no.length) sentences.push(`Got it—I’ve got ${count ? `${count} of you` : "you"} down for ${join(yes)}, and noted that you can’t make ${join(no)}.`);
+      else if (yes.length) sentences.push(`Got it—I’ve got ${count ? `${count} of you` : "you"} down for ${join(yes)}.`);
+      else if (no.length) sentences.push(`Thanks for letting me know—I’ve noted that you can’t make ${join(no)}.`);
+    }
+  } else if (notes.includes("rsvp")) {
+    const status = updates.rsvp_status;
+    if (hinglish) sentences.push(status === "not_coming" ? "Samajh gaya, aap nahi aa paayenge—note kar liya." : "Theek hai, aapke group ko coming mark kar diya hai.");
+    else sentences.push(status === "not_coming" ? "Thanks for letting me know—I’ve noted that you can’t make it." : "Thanks, I’ve marked your group as coming.");
+  }
+
+  if (notes.includes("count")) {
+    const count = Number(updates.party_size);
+    if (count > invitedCount && count > 0) {
+      sentences.push(hinglish
+        ? `Invite mein ${invitedCount} the, toh final count family se confirm karwa raha hoon.`
+        : `The invitation lists ${invitedCount}, so I’ve asked the family to confirm the final count.`);
+    } else if (!responses.length && !notes.includes("rsvp") && count > 0) {
+      sentences.push(hinglish ? `${count} log note kar liye— aap sab aa rahe hain.` : `Got it—${count} of you are coming.`);
+    } else if (!responses.length && count > 0) {
+      sentences.push(hinglish ? `${count} log note kar liye.` : `I’ve noted ${count} of you.`);
+    }
+  }
+  if (notes.includes("arrival_mode")) {
+    const date = updates.arrival_date ? humanDate(updates.arrival_date) : "";
+    const time = updates.arrival_time ? ` at ${updates.arrival_time}` : "";
+    sentences.push(hinglish
+      ? `${date ? `${date} ko ` : ""}${updates.arrival_mode} se aana note kar liya${time}.`
+      : `Thanks—I’ve got you down to arrive by ${updates.arrival_mode}${date ? ` on ${date}` : ""}${time}.`);
+  }
+  if (notes.includes("needs_room")) sentences.push(hinglish
+    ? (updates.needs_room ? "Room chahiye, note kar liya." : "Room nahi chahiye, note kar liya.")
+    : (updates.needs_room ? "I’ve noted that you need a room." : "No room needed—got it."));
+  if (notes.includes("needs_pickup")) sentences.push(hinglish
+    ? (updates.needs_pickup ? "Pickup bhi note kar liya." : "Pickup nahi chahiye, note kar liya.")
+    : (updates.needs_pickup ? "I’ve noted that you need a pickup too." : "No pickup needed—got it."));
+  return sentences.join(" ");
+}
 function resolveArrivalDate(q, facts) {
   const valid = (year, month, day) => {
     const d = new Date(Date.UTC(year, month - 1, day));
@@ -499,6 +559,7 @@ async function chat(db, sid, text, env) {
   }
   const p = parseRsvp(text, g, facts, intent),
     u = p.updates,
+    changedResponses = u.function_responses_json ? JSON.parse(u.function_responses_json) : {},
     over =
       Number.isInteger(u.party_size) &&
       u.party_size > g.invited_count &&
@@ -546,49 +607,13 @@ async function chat(db, sid, text, env) {
   }
   const fa = groundedIntentFactReply(text, facts, intent, lang),
     h = lang !== "english" ||
-      /\b(haan|hum|aayenge|aa rahe|nahi|nahin|log|chahiye|kab|kahan|kitne|ko|se)\b/i.test(
-        text,
-      ),
-    parts = [];
-  if (p.notes.includes("rsvp"))
-    parts.push(
-      h ? "Aapka RSVP update kar diya hai." : "I've updated your RSVP.",
-    );
-  if (p.notes.includes("count"))
-    parts.push(
-      h
-        ? `Aapke group mein ${u.party_size} log note kiye hain.`
-        : `I've noted ${u.party_size} people in your group.`,
-    );
-  if (p.notes.includes("arrival_mode"))
-    parts.push(
-      h
-        ? `${u.arrival_date ? `${humanDate(u.arrival_date)} ko ` : ""}${u.arrival_mode} se aa rahe hain.`
-        : `I've noted your arrival by ${u.arrival_mode}${u.arrival_date ? ` on ${humanDate(u.arrival_date)}` : ""}.`,
-    );
-  if (p.notes.includes("needs_room"))
-    parts.push(
-      h
-        ? u.needs_room ? "Room chahiye, note kar liya hai." : "Room nahi chahiye, note kar liya hai."
-        : u.needs_room ? "I've noted that you need a room." : "I've noted that you don't need a room.",
-    );
-  if (p.notes.includes("needs_pickup"))
-    parts.push(
-      h
-        ? u.needs_pickup ? "Pickup chahiye, note kar liya hai." : "Pickup nahi chahiye, note kar liya hai."
-        : u.needs_pickup ? "I've noted that you need a pickup." : "I've noted that you don't need a pickup.",
-    );
+      /\b(haan|hum|aayenge|aa rahe|nahi|nahin|log|chahiye|kab|kahan|kitne|ko|se)\b/i.test(text),
+    parts = [humanRsvpReply(u, changedResponses, p.notes, g.invited_count, lang)].filter(Boolean);
   if (p.notes.includes("ambiguous_arrival_date"))
     parts.push(
       h
-        ? "Safar ki date wedding details se match nahi hui, family se confirm karne ko kaha hai."
-        : "I couldn't match that travel date to the wedding details, so I've asked the family to confirm it.",
-    );
-  if (over)
-    parts.push(
-      h
-        ? "Invited count se zyada log hain, isliye family se confirm karne ke liye flag kiya hai."
-        : "Your group is larger than the invitation count, so I flagged it for the family to confirm.",
+        ? "Date samajh nahi aayi, family se aapke saath confirm karne ko kaha hai."
+        : "I wasn’t sure which date you meant, so I’ve asked the family to check with you.",
     );
   if (fa) parts.push(fa);
   let answer = parts.join(" ");
@@ -606,8 +631,8 @@ async function chat(db, sid, text, env) {
       )
       .run();
     answer = h
-      ? "Yeh baat family details mein nahi mili, maine family ko pooch liya hai. Reply yahin milega."
-      : "I couldn't confirm that from the family's details, so I've passed your message to them. They'll reply here.";
+      ? "Mujhe iska pakka jawab nahi mila, isliye family se pooch liya hai. Woh yahin reply karenge."
+      : "I’m not sure about that, so I’ve asked the family. They’ll reply here.";
   }
   await log(db, sid, "desk", answer);
   return { answer, updated: u, escalated: over || p.notes.includes("ambiguous_arrival_date") || !parts.length };
@@ -868,4 +893,4 @@ async function route(req, env, db) {
     }
     return json({ error: "Not found." }, 404);
 }
-export { modelIntent, parseRsvp, groundedFactReply, groundedIntentFactReply, factAnswer, directFactQuestion, isConversationalGreeting, shouldUseModel };
+export { modelIntent, parseRsvp, humanRsvpReply, groundedFactReply, groundedIntentFactReply, factAnswer, directFactQuestion, isConversationalGreeting, shouldUseModel };

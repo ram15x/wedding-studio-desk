@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { directFactQuestion, factAnswer, groundedFactReply, groundedIntentFactReply, isConversationalGreeting, modelIntent, parseRsvp, shouldUseModel } from "../src/index.js";
+import { directFactQuestion, factAnswer, groundedFactReply, groundedIntentFactReply, humanRsvpReply, isConversationalGreeting, modelIntent, parseRsvp, shouldUseModel } from "../src/index.js";
 
 const guest = {
   functions_json: JSON.stringify(["Mehendi", "Sangeet", "Wedding", "Reception"]),
@@ -33,6 +33,32 @@ test("model-classified fact paraphrases are answered from the selected sheet fie
     "english",
   );
   assert.equal(answer, "Sangeet is 20 November 2026 at 6:30 PM.");
+});
+
+test("RSVP confirmations sound conversational and explain mixed function replies", () => {
+  const parsed = parseRsvp(
+    "Hum 2 log aayenge shaadi mein, reception nahi aa paayenge",
+    guest,
+    {},
+  );
+  const changed = JSON.parse(parsed.updates.function_responses_json);
+  assert.equal(
+    humanRsvpReply(parsed.updates, changed, parsed.notes, 3, "english"),
+    "Got it—I’ve got 2 of you down for the wedding, and noted that you can’t make the reception.",
+  );
+  assert.equal(
+    humanRsvpReply(parsed.updates, changed, parsed.notes, 3, "hinglish"),
+    "Theek hai, 2 log Wedding ke liye aa rahe hain aur Reception ke liye nahi aa paayenge—note kar liya.",
+  );
+});
+
+test("over-invited count reply gently explains why the family will confirm", () => {
+  const parsed = parseRsvp("Hum 6 log aayenge", { ...guest, invited_count: 2 }, {});
+  const changed = JSON.parse(parsed.updates.function_responses_json);
+  assert.match(
+    humanRsvpReply(parsed.updates, changed, parsed.notes, 2, "english"),
+    /I’ve got 6 of you down for .*\. The invitation lists 2, so I’ve asked the family to confirm the final count\./,
+  );
 });
 
 test("count-only RSVP is recorded as coming", () => {

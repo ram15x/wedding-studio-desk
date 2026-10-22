@@ -45,6 +45,12 @@ I redeployed the Worker after those updates. The health endpoint still reported 
 - A separate synthetic request to OpenRouter's `openrouter/free` router returned HTTP 200 from MiniMax M3.1 Flash, but a simple check did not find the expected `kind` and `attendance` fields. I did not switch production to that router.
 - The Worker test suite includes a 15-message realistic RSVP/fact matrix. It passes locally, but not all 15 messages have been manually entered in the live chat.
 
+## Latest reply-quality update
+
+The current source now builds RSVP confirmations from the guest's actual update: it names the functions they said yes or no to, confirms the party size, and explains when the count needs family confirmation. Schedule answers use the date and time stored in the details sheet. OpenRouter reads less predictable wording into intent fields; it does not write the answer or supply wedding facts. The reply is assembled from the verified guest update and uploaded wedding details.
+
+The reply-quality change is covered by the Worker tests, but it has **not been verified in the live deployment yet**. Live OpenRouter behavior also remains unverified: earlier live requests were rate-limited or escalated, while the latest test run only exercises mocked model responses. Do not treat local test success as proof that the live OpenRouter keys or model are working.
+
 The demo roster and wedding details are fictional. The app handles supported wedding questions and RSVP updates; it cannot promise to answer every possible message. When the available details do not support an answer, it sends the question to the family.
 
 ## Run and test the Worker
