@@ -25,7 +25,7 @@ The family password is managed as a Cloudflare secret and is not included here. 
 
 ## What I checked on 22 October 2026
 
-The active Cloudflare Worker version seen on 22 Oct is `815f06ee` (a configuration-only deployment); the current app source is newer and has not yet been deployed. The Worker uses Supabase PostgreSQL through Cloudflare Hyperdrive. I uploaded the repository's synthetic 20-guest CSV and wedding-details CSV to the live import endpoints, then ran the RSVP and reply checks below. The CSV upload endpoint accepted all 20 rows; the browser's file chooser could not be used because the Chrome extension blocks local-file access, so a fresh upload through the visible file picker is still unverified.
+The active Cloudflare Worker version verified on 22 Oct is `71d244c3-d63c-4be1-bdc7-9bbe924ca1ff` (100% traffic), running application commit `bfd586f`. The Worker uses Supabase PostgreSQL through Cloudflare Hyperdrive. The repository's synthetic 20-guest CSV and wedding-details CSV were accepted by the live import endpoints. A fresh upload through the visible browser file picker remains unverified because the Chrome extension blocks local-file access.
 
 | Guest message | Observed result |
 | --- | --- |
@@ -49,9 +49,9 @@ I redeployed the Worker after those updates. The health endpoint still reported 
 
 The current source now builds RSVP confirmations from the guest's actual update: it names the functions they said yes or no to, confirms the party size, and explains when the count needs family confirmation. Schedule and wedding-detail answers are phrased as short conversational sentences instead of label-value output, using only the date, time, and details stored in the family's sheet. OpenRouter reads less predictable wording into intent fields; it does not write the answer or supply wedding facts. The reply is assembled from the verified guest update and uploaded wedding details.
 
-The reply-quality change is covered by the Worker tests, but it has **not been verified in the live deployment yet**. Live OpenRouter behavior also remains unverified: earlier live requests were rate-limited or escalated, while the latest test run only exercises mocked model responses. Do not treat local test success as proof that the live OpenRouter keys or model are working.
+The reply-quality change is covered by the Worker tests and was verified live after deployment: “Mehendi kab hai?” returned “Mehendi 19 November 2026 ko 4:00 PM par hai.” and “When does Sangeet start?” returned “The Sangeet is on 20 November 2026 at 6:30 PM.” Live OpenRouter behavior remains unverified: earlier live requests were rate-limited or escalated, while the latest test run only exercises mocked model responses. Do not treat local test success as proof that the live OpenRouter keys or model are working.
 
-On 22 Oct, the Cloudflare dashboard showed version `815f06ee` active after a secret update; it still runs the prior app code. The live message “You can count our family in for the big day” escalated to the family. GitHub has the newer source, but this update still needs a Cloudflare code deployment and a repeat live test.
+On 22 Oct, Worker version `71d244c3-d63c-4be1-bdc7-9bbe924ca1ff` was verified active at 100% traffic, with app commit `bfd586f`. Live English and Hinglish schedule answers were checked against the uploaded wedding-details sheet. The live message “You can count our family in for the big day” still escalated to the family, so OpenRouter intent classification is not confirmed working.
 
 The demo roster and wedding details are fictional. The app handles supported wedding questions and RSVP updates; it cannot promise to answer every possible message. When the available details do not support an answer, it sends the question to the family.
 

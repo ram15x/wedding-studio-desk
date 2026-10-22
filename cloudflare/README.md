@@ -7,8 +7,8 @@ The hosted Ishqweds app runs as a Cloudflare Worker and stores wedding data in S
 - Guest chat: https://ishqweds-guest-desk.ramnarayanan155-68f.workers.dev/
 - Family desk: https://ishqweds-guest-desk.ramnarayanan155-68f.workers.dev/family
 - Health: https://ishqweds-guest-desk.ramnarayanan155-68f.workers.dev/health
-- Active Worker version seen in the Cloudflare dashboard (22 Oct 2026): `815f06ee` (configuration-only; it still runs the prior app code).
-- Latest application source commit pushed to GitHub (22 Oct 2026): `bfd586f` — it is **not deployed to the Worker yet**.
+- Active Worker version verified on 22 Oct 2026: `71d244c3-d63c-4be1-bdc7-9bbe924ca1ff` (100% traffic).
+- Latest application source commit pushed to GitHub (22 Oct 2026): `bfd586f` — this code is deployed to the Worker.
 
 The family desk uses HTTP Basic Auth with username `owner` and the encrypted Cloudflare secret `OWNER_PASSWORD`. Guest login matches the submitted phone number to the guest list; it does not send an SMS or OTP.
 
@@ -47,6 +47,6 @@ Set `OWNER_PASSWORD` and `OPENROUTER_API_KEYS` as Cloudflare Worker secrets. Kee
 
 `npm test` runs 30 Cloudflare tests, including PostgreSQL adapter checks and a 15-message realistic RSVP/fact matrix. All 30 pass locally. The matrix is automated; it is not proof that every message was manually entered in production. Live checks confirmed the mixed RSVP, count-only/over-invite warning, arrival/flight/room/pickup update, grounded venue answer, unknown-question escalation, family reply in the guest chat, and survival across one redeployment.
 
-The latest source makes RSVP confirmations more specific and conversational, and turns wedding facts into natural sentences such as “The Sangeet is on 20 November 2026 at 6:30 PM.” The wording changes are covered by local tests but remain **unverified on the live Worker** until a new deployment is made.
+The latest source makes RSVP confirmations more specific and conversational, and turns wedding facts into natural sentences such as “The Sangeet is on 20 November 2026 at 6:30 PM.” After deployment, the live guest chat returned “Mehendi 19 November 2026 ko 4:00 PM par hai.” and “The Sangeet is on 20 November 2026 at 6:30 PM.” for corresponding questions.
 
 The two-minute recording is handled by the owner. No WhatsApp integration or SMS OTP is configured. A physical-phone test and fresh file selection through the browser remain to be repeated.
