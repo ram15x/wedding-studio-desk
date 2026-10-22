@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { directFactQuestion, factAnswer, groundedFactReply, isConversationalGreeting, modelIntent, parseRsvp, shouldUseModel } from "../src/index.js";
+import { directFactQuestion, factAnswer, groundedFactReply, groundedIntentFactReply, isConversationalGreeting, modelIntent, parseRsvp, shouldUseModel } from "../src/index.js";
 
 const guest = {
   functions_json: JSON.stringify(["Mehendi", "Sangeet", "Wedding", "Reception"]),
@@ -18,6 +18,21 @@ test("model is skipped for greetings, acknowledgements, grounded facts, and clea
 
 test("model remains available for natural phrasing the deterministic parser cannot resolve", () => {
   assert.equal(shouldUseModel("I intend to be at the wedding.", guest, {}), true);
+});
+
+test("model-classified fact paraphrases are answered from the selected sheet fields", () => {
+  const facts = {
+    "Sangeet Date": "2026-11-20",
+    "Sangeet Time": "2026-11-20 18:30",
+    "Wedding Venue": "Lotus Convention Centre",
+  };
+  const answer = groundedIntentFactReply(
+    "When should we arrive for the music celebration?",
+    facts,
+    { kind: "fact", fact_keys: ["Sangeet Date", "Sangeet Time"], language: "english" },
+    "english",
+  );
+  assert.equal(answer, "Sangeet is 20 November 2026 at 6:30 PM.");
 });
 
 test("count-only RSVP is recorded as coming", () => {
@@ -298,6 +313,7 @@ test("OpenRouter tries the next configured key after a rate limit and validates 
       { OPENROUTER_API_KEYS: "test-key-one,test-key-two", OPENROUTER_MODELS: "openrouter/free" },
     );
     assert.equal(calls.length, 2);
+    assert.deepEqual(JSON.parse(calls[1].body).response_format, { type: "json_object" });
     assert.deepEqual(result.function_responses, { Mehendi: "coming", Sangeet: "not_coming" });
     assert.equal(result.party_size, 2);
   } finally {
