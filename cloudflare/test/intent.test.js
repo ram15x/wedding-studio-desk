@@ -16,6 +16,21 @@ test("model is skipped for greetings, acknowledgements, grounded facts, and clea
   assert.equal(shouldUseModel("Hum 6 log aayenge", guest, facts), false);
 });
 
+test("location intent wins over an event name in a natural venue question", () => {
+  const facts = {
+    wedding_date: "2026-11-21",
+    wedding_venue: "Lotus Convention Centre, Coimbatore",
+  };
+  assert.equal(
+    factAnswer("Where should our driver take us for the wedding?", facts),
+    "The venue is Lotus Convention Centre, Coimbatore.",
+  );
+  assert.equal(
+    factAnswer("Could you share the wedding venue address for our cab?", facts),
+    "The venue is Lotus Convention Centre, Coimbatore.",
+  );
+});
+
 test("model remains available for natural phrasing the deterministic parser cannot resolve", () => {
   assert.equal(shouldUseModel("I intend to be at the wedding.", guest, {}), true);
 });

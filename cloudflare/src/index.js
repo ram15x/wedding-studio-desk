@@ -195,6 +195,16 @@ function factAnswer(text, facts, language = "english") {
     });
     return matching.map(([k, v]) => naturalFactStatement(k, v, language)).join(" ");
   }
+  // A location question can also contain an event name (for example,
+  // “Where should our driver take us for the wedding?”). Resolve its subject
+  // from the venue/location fields before the generic event/date matcher.
+  if (/\b(where|venue|address|location|directions?|map|driver|kahan)\b/.test(q)) {
+    const locationFacts = Object.entries(facts).filter(([k]) =>
+      /venue|address|location/i.test(k),
+    );
+    if (locationFacts.length)
+      return locationFacts.map(([k, v]) => naturalFactStatement(k, v, language)).join(" ");
+  }
   let exact = Object.entries(facts).filter(([k]) => {
     const ws = norm(k)
       .split(" ")
